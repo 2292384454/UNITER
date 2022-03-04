@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteMappingsManager">
+    <list>
+      <list>
+        <remote-mappings server-id="python@sftp://hky@192.168.1.138:22/data/hky/anaconda3/bin/python">
+          <settings>
+            <list>
+              <mapping local-root="$PROJECT_DIR$" remote-root="/data/hky/UNITER" />
+            </list>
+          </settings>
+        </remote-mappings>
+        <remote-mappings server-id="python@docker://uniter_hky:v0/python">
+          <settings>
+            <list>
+              <mapping local-root="$PROJECT_DIR$" remote-root="/src" />
+            </list>
+          </settings>
+        </remote-mappings>
+        <remote-mappings server-id="python@docker://chenrocks/uniter:latest/python">
+          <settings>
+            <list>
+              <mapping local-root="$PROJECT_DIR$" remote-root="/src" />
+            </list>
+          </settings>
+        </remote-mappings>
+        <remote-mappings server-id="python@docker://hky/uniter:v0/python">
+          <settings>
+            <list>
+              <mapping local-root="$PROJECT_DIR$" remote-root="/src" />
+            </list>
+          </settings>
+        </remote-mappings>
+      </list>
+    </list>
+  </component>
+</project>
