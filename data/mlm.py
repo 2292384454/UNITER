@@ -130,18 +130,18 @@ class MlmDataset(DetectFeatTxtTokDataset):
         need_mask_idx = []
         replace_map = None
         if len(no_repeat) > 0:
-            # # 将所有有交集的 token 全部掩码掉
-            # for i, tk in enumerate(input_ids):
-            #     if tk in temp_set:
-            #         need_mask_idx.append(i)
+            # 将所有有交集的 token 全部掩码掉
+            for i, tk in enumerate(input_ids):
+                if tk in temp_set:
+                    need_mask_idx.append(i)
 
-            # 选择出一种 token，将所有的该 token 掩码掉
-            tar_token = random.sample(no_repeat, 1)[0]
-            # TODO: 如果同一句话里同时出现了 dog 和 dogs?
-            need_mask_idx = np.where(np.array(input_ids) == tar_token)[0]
-            masked_replace_to = np.where(np.array(mapping) == tar_token)[0]
-            # 加 1 是因为会在头部加上 [CLS]
-            replace_map = {i + 1: masked_replace_to[0] for i in need_mask_idx}
+            # # 选择出一种 token，将所有的该 token 掩码掉
+            # tar_token = random.sample(no_repeat, 1)[0]
+            # # TODO: 如果同一句话里同时出现了 dog 和 dogs?
+            # need_mask_idx = np.where(np.array(input_ids) == tar_token)[0]
+            # masked_replace_to = np.where(np.array(mapping) == tar_token)[0]
+            # # 加 1 是因为会在头部加上 [CLS]
+            # replace_map = {i + 1: masked_replace_to[0] for i in need_mask_idx}
 
         # text input
         input_ids, txt_labels = self.create_mlm_io(example['input_ids'], need_mask_idx)

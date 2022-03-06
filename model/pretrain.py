@@ -18,7 +18,6 @@ from .ot import optimal_transport_dist
 
 class RegionFeatureRegression(nn.Module):
     " for MRM"
-
     def __init__(self, hidden_size, feat_dim, img_linear_weight):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
@@ -36,7 +35,6 @@ class RegionFeatureRegression(nn.Module):
 
 class RegionClassification(nn.Module):
     " for MRC(-kl)"
-
     def __init__(self, hidden_size, label_dim):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
@@ -51,7 +49,6 @@ class RegionClassification(nn.Module):
 
 class UniterForPretraining(UniterPreTrainedModel):
     """ UNITER pretraining """
-
     def __init__(self, config, img_dim, img_label_dim):
         super().__init__(config)
         self.uniter = UniterModel(config, img_dim)
@@ -113,7 +110,6 @@ class UniterForPretraining(UniterPreTrainedModel):
     def forward_mlm(self, input_ids, position_ids, img_feat, img_pos_feat,
                     attention_mask, gather_index,
                     txt_labels, replace_map, compute_loss=True):
-
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
                                       attention_mask, gather_index, replace_map=replace_map, mlm_or_mrm=0,
@@ -140,8 +136,7 @@ class UniterForPretraining(UniterPreTrainedModel):
         return hidden_masked
 
     def forward_mrfr(self, input_ids, position_ids, img_feat, img_pos_feat,
-                     attention_mask, gather_index,
-                     img_masks, img_mask_tgt,
+                     attention_mask, gather_index, img_masks, img_mask_tgt,
                      feat_targets, replace_map, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,

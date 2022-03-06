@@ -312,7 +312,6 @@ class UniterEncoder(nn.Module):
 
 class UniterModel(UniterPreTrainedModel):
     """ Modification for Joint Vision-Language Encoding
-
         KevinHwang: UniterModel 的主模块，首先是在构造函数中
         先进行 UniterTextEmbeddings、UniterImageEmbeddings、
         UniterEncoder 等类的初始化。分仅有 text ，仅有 image 或者
@@ -353,18 +352,18 @@ class UniterModel(UniterPreTrainedModel):
         img_emb = self._compute_img_embeddings(
             img_feat, img_pos_feat, img_masks, img_type_ids)
 
-        # 对掩码实体 token embedding 替换成对应的 region embedding
-        if replace_map is not None:
-            if mlm_or_mrm == 0:
-                for i, map in enumerate(replace_map):
-                    if map is not None:
-                        for k, v in map.items():
-                            txt_emb[i][k] = img_emb[i][v]
-            elif mlm_or_mrm == 1:
-                for i, map in enumerate(replace_map):
-                    if map is not None:
-                        for k, v in map.items():
-                            img_emb[i][k] = txt_emb[i][v]
+        # # NOTE: 对掩码实体 token embedding 替换成对应的 region embedding
+        # if replace_map is not None:
+        #     if mlm_or_mrm == 0:
+        #         for i, the_map in enumerate(replace_map):
+        #             if the_map is not None:
+        #                 for k, v in the_map.items():
+        #                     txt_emb[i][k] = img_emb[i][v]
+        #     elif mlm_or_mrm == 1:
+        #         for i, the_map in enumerate(replace_map):
+        #             if the_map is not None:
+        #                 for k, v in the_map.items():
+        #                     img_emb[i][k] = txt_emb[i][v]
 
         # align back to most compact input
         gather_index = gather_index.unsqueeze(-1).expand(
@@ -383,7 +382,6 @@ class UniterModel(UniterPreTrainedModel):
                 replace_map=None, mlm_or_mrm=2,  # mlm_or_mrm: mlm时0，mrm时1，其他时候2
                 img_masks=None, output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
-
         # compute self-attention mask
         extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
         extended_attention_mask = extended_attention_mask.to(

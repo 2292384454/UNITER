@@ -46,7 +46,6 @@ def build_dataloader(dataset, collate_fn, is_train, opts):
     if is_train:
         batch_size = opts.train_batch_size
     else:
-
         batch_size = opts.val_batch_size
     sampler = TokenBucketSampler(dataset.lens, bucket_size=BUCKET_SIZE,
                                  batch_size=batch_size, droplast=is_train)
@@ -72,8 +71,7 @@ def build_dataloader_itm(dataset, collate_fn, is_train, opts):
 
 def build_mlm_dataset(txt_db, img_db, is_train, opts):
     if is_train:
-        datasets = [MlmDataset(t, i)
-                    for t, i in zip(txt_db, img_db)]
+        datasets = [MlmDataset(t, i) for t, i in zip(txt_db, img_db)]
         dataset = ConcatDatasetWithLens(datasets)
     else:
         dataset = MlmDataset(txt_db, img_db)
@@ -163,8 +161,8 @@ def create_dataloaders(datasets, is_train, opts, all_img_dbs=None):
             else:
                 raise ValueError(f'Undefined task {task}')
 
-            LOGGER.info(f"{len(dataset[0]) * hvd.size()} samples loaded")
-            if task.startswith('itm'):
+            LOGGER.info(f"{len(dataset[0])*hvd.size()} samples loaded")
+            if task.startswith('itm') or task.startswith('wrc'):
                 # itm handles distributed training in dset not sampler
                 loader = build_dataloader_itm(*dataset, is_train, opts)
             else:
@@ -186,12 +184,12 @@ def main(opts):
     opts.rank = rank
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
-        device, n_gpu, hvd.rank(), opts.fp16))
+                    device, n_gpu, hvd.rank(), opts.fp16))
 
     if opts.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, "
                          "should be >= 1".format(
-            opts.gradient_accumulation_steps))
+                            opts.gradient_accumulation_steps))
 
     set_random_seed(opts.seed)
 
@@ -281,7 +279,6 @@ def main(opts):
     # to compute training statistics
     task2loss = {task: RunningMeter(f'loss/{task}')
                  for task in train_dataloaders.keys()}
-
     # ITM w/ OT
     if opts.itm_ot_lambda > 0:
         for task in train_dataloaders.keys():
@@ -302,7 +299,6 @@ def main(opts):
     # quick hack for amp delay_unscale bug
     optimizer.zero_grad()
     optimizer.step()
-
     for step, (name, batch) in enumerate(meta_loader):
         # forward pass
         n_examples[name] += batch['input_ids'].size(0)
@@ -338,7 +334,7 @@ def main(opts):
             loss = loss.mean()  # loss is not normalized in model
 
         # backward pass
-        delay_unscale = (step + 1) % opts.gradient_accumulation_steps != 0
+        delay_unscale = (step+1) % opts.gradient_accumulation_steps != 0
         with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale,
                             loss_id=task2scaler[name]) as scaled_loss:
             scaled_loss.backward()
@@ -404,7 +400,6 @@ def main(opts):
                 model_saver.save(model, global_step)
         if global_step >= opts.num_train_steps:
             break
-
     if global_step % opts.valid_steps != 0:
         LOGGER.info(f'Step {global_step}: start validation')
         validate(model, val_dataloaders)
