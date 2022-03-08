@@ -14,28 +14,11 @@ from .word_region_util import obj2bert
 import numpy as np
 
 
-# KevinHwang@220223: 获取对应关系
-def _get_mapping(converted_argmax, input_ids_list):
-    mapping = []
-    for word_list in converted_argmax:
-        # 对于每一个 word_list ，判断 input_ids_list 中是否有 token 在其中出现，如果有就将该 token 计入 mapping 对应的位置，否则计入0
-        i = 0
-        while i < len(input_ids_list):
-            if input_ids_list[i] in word_list:
-                mapping.append(input_ids_list[i])
-                break
-            i = i + 1
-        if i == len(input_ids_list):
-            mapping.append(0)
-    return mapping
-
-
 def _get_img_mask(mask_prob, num_bb):
     img_mask = [random.random() < mask_prob for _ in range(num_bb)]
     if not any(img_mask):
         # at least mask 1
         img_mask[random.choice(range(num_bb))] = True
-    img_mask = torch.tensor(img_mask)
     return img_mask
 
 
@@ -57,6 +40,51 @@ def _mask_img_feat(img_feat, img_masks):
     img_masks_ext = img_masks.unsqueeze(-1).expand_as(img_feat)
     img_feat_masked = img_feat.data.masked_fill(img_masks_ext, 0)
     return img_feat_masked
+
+
+# KevinHwang@220306
+def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
+    # 使用 argmax 取得每一个 region 的实体标签序号
+    # background class should not be the target
+    argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
+    # 将实体标签序号转化为 token（每一个实体标签序号可能对应多个 token）
+    converted_argmax = [obj2bert[obj_label] if obj_label in obj2bert.keys() else [] for obj_label in
+                        argmax_soft_labels]
+    # 获取所有的实体 token 并去重
+    obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
+    txt_len = len(input_ids)
+    txt_mask = [True] * txt_len  # input_ids 的 mask 遮罩，True 为需要 mask 的
+    img_mask = [False] * num_bb  # region 的 mask 遮罩，True 为需要 mask 的
+    if len(obj_tokens) > 0:
+        # 选择出一种 token，将所有的该 token 掩码掉
+        # tar_token = random.sample(no_repeat, 1)[0]
+
+        # 遍历所有的实体 token
+        for tar_token in obj_tokens:
+            # 如果 input_ids 中有实体 token ，就将之保留并且 mask 对应的 region
+            for i, tk in enumerate(input_ids):
+                if tk == tar_token:
+                    txt_mask[i] = False
+                    for j, rg in enumerate(converted_argmax):
+                        if tar_token in rg:
+                            img_mask[j] = True
+
+    # 对 txt_mask 再做一次处理，除了确定要保留的，剩下的所有以 mask_prob 的概率保留
+    for i in range(txt_len):
+        if txt_mask[i] and random.random() < mask_prob:
+            txt_mask[i] = False
+    '''
+    # -------------------------------------------------[调试代码]-----------------------------------------------------
+    # img_mask_tgt:
+    print('obj_tokens:', obj_tokens)
+    # obj_tokens: [4355, 4876, 16024, 8090, 17180, 5020, 4637, 24998, 2095, 3504, 13624, 4282, 1339, 3392, 7366,
+    # 5324, 4694, 4705, 2146, 7404, 3439, 2928, 1520]
+    print('argmax_soft_labels:', argmax_soft_labels)
+    # argmax_soft_labels: [118, 248, 1330, 1066, 959, 1281, 1330, 959, 959, 959, 1010, 800, 327, 598, 909, 959, 959,
+    # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
+    # -----------------------------------------------[调试代码 END]---------------------------------------------------
+    '''
+    return img_mask, txt_mask
 
 
 class MrfrDataset(DetectFeatTxtTokDataset):
@@ -86,53 +114,27 @@ class MrfrDataset(DetectFeatTxtTokDataset):
         example = super().__getitem__(i)
         # text input
         input_ids = example['input_ids']
-        input_ids = self.txt_db.combine_inputs(input_ids)
-
-        # image input features
-        # img_feat, img_pos_feat, num_bb = self._get_img_feat(
-        #     example['img_fname'])
 
         # KevinHwang@220223: 改进后的 img input ，可以取得 img_soft_labels
-        img_fname = example['img_fname']
-        img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(img_fname)
+        img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
-        # KevinHwang@220223:
-        # 使用 argmax 取得每一个 region 的实体标签序号
-        argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
-        # 将实体标签转化为单词 token（每一个实体标签可能对应多个单词 token）
-        converted_argmax = [obj2bert[obj_label] if obj_label in obj2bert.keys() else [-1] for obj_label in
-                            argmax_soft_labels]
-        # 获取图片 region 与文本 token 的对应关系
-        input_ids_list = input_ids.int().tolist()
-        mapping = _get_mapping(converted_argmax, input_ids_list)
-        # # 对 mapping 去重
-        # temp_set = set(mapping)
-        # temp_set.discard(0)
-        # no_repeat = list(set(temp_set))
-        # need_mask_idx = []
-        # replace_map = None
-        # if len(no_repeat) > 0:
-        #     # 选择出一种 token，将所有的该 token 掩码掉
-        #     tar_token = random.sample(no_repeat, 1)[0]
-        #     # 所有在图片中出现过指代该 token 的 region 都 MASK 掉
-        #     need_mask_idx = np.where(np.array(mapping) == tar_token)[0]
-        #     # masked_replace_to = np.where(np.array(input_ids) == tar_token)[0]
-        #     # 因为在 `input_ids = self.txt_db.combine_inputs(input_ids)` 这一步已经加了 [CLS]，所以这里不需要考虑是否 +1 的事
-        #     # replace_map = {i: masked_replace_to[0] for i in need_mask_idx}
+        # KevinHwang: get img_mask and txt_mask
+        img_mask1, txt_mask = _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb)
+        # 合并上原本 15% 的 mask
+        img_mask2 = _get_img_mask(self.mask_prob, num_bb)
+        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
 
-        # 所有在图片中出现过指代的 region 都 MASK 掉
-        need_mask_idx = np.where(np.array(mapping) != 0)[0]
-
-        img_mask = _get_img_mask(self.mask_prob, num_bb)
-
-        # KevinHwang@220223:选中的 token 对应的 region 全部 MASK
-        for i in need_mask_idx:
-            img_mask[i] = True
+        # mask text
+        mask = self.txt_db.mask
+        txt_len = len(input_ids)
+        input_ids = [mask if txt_mask[k] else input_ids[k] for k in range(txt_len)]
+        # transfer input_ids to tensor from list
+        # NOTE：一定要先对文本掩码再进行这一步，不然可能将[CLS]或者[SEP]掩码掉
+        input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])
 
         img_mask_tgt = _get_img_tgt_mask(img_mask, len(input_ids))
 
         attn_masks = torch.ones(len(input_ids) + num_bb, dtype=torch.long)
-
         '''
         # -------------------------------------------------[调试代码]-----------------------------------------------------
         print('input_ids: ', input_ids)
@@ -215,17 +217,7 @@ class MrfrDataset(DetectFeatTxtTokDataset):
         exit(1)
         # -----------------------------------------------[调试代码 END]---------------------------------------------------
         '''
-        '''
-        # -------------------------------------------------[调试代码]-----------------------------------------------------
-        print('tar_token:', tar_token)
-        print('input_ids:', input_ids)
-        print('need_mask_idx:', need_mask_idx)
-        print('argmax_soft_labels', argmax_soft_labels)
-        print('masked_replace_to:', masked_replace_to)
-        print('replace_map', replace_map)
-        exit(-1)
-        # -------------------------------------------------[调试代码]-----------------------------------------------------
-        '''
+
         return (input_ids, img_feat, img_pos_feat,
                 attn_masks, img_mask, img_mask_tgt)
 
@@ -242,7 +234,7 @@ def mrfr_collate(inputs):
     - attn_masks   : (n, max_{L + num_bb}), ie., [1, 1, ..., 0, 0, 1, 1]
     - img_masks    : (n, max_num_bb) between {0, 1}
     """
-    (input_ids, img_feats, img_pos_feats, attn_masks, img_masks, img_mask_tgts
+    (input_ids, img_feats, img_pos_feats, attn_masks, img_masks, img_mask_tgts,
      ) = map(list, unzip(inputs))
 
     txt_lens = [i.size(0) for i in input_ids]
@@ -303,46 +295,24 @@ class MrcDataset(DetectFeatTxtTokDataset):
 
     def __getitem__(self, i):
         example = super().__getitem__(i)
-        img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(
-            example['img_fname'])
-
         # text input
         input_ids = example['input_ids']
-        input_ids = self.txt_db.combine_inputs(input_ids)
 
-        # KevinHwang@220223:
-        # 使用 argmax 取得每一个 region 的实体标签序号
-        argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
-        # 将实体标签转化为单词 token（每一个实体标签可能对应多个单词 token）
-        converted_argmax = [obj2bert[obj_label] if obj_label in obj2bert.keys() else [-1] for obj_label in
-                            argmax_soft_labels]
+        # KevinHwang@220223: 改进后的 img input ，可以取得 img_soft_labels
+        img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
-        # 获取图片 region 与文本 token 的对应关系
-        input_ids_list = input_ids.int().tolist()
-        mapping = _get_mapping(converted_argmax, input_ids_list)
-        # # 对 mapping 去重
-        # temp_set = set(mapping)
-        # temp_set.discard(0)
-        # no_repeat = list(set(temp_set))
-        # need_mask_idx = []
-        replace_map = None
-        # if len(no_repeat) > 0:
-        #     # 选择出一种 token，将所有的该 token 掩码掉
-        #     tar_token = random.sample(no_repeat, 1)[0]
-        #     # 所有在图片中出现过指代该 token 的 region 都 MASK 掉
-        #     need_mask_idx = np.where(np.array(mapping) == tar_token)[0]
-        #     masked_replace_to = np.where(np.array(input_ids) == tar_token)[0]
-        #     # 因为在 `input_ids = self.txt_db.combine_inputs(input_ids)` 这一步已经加了 [CLS]，所以这里不需要考虑是否 +1 的事
-        #     replace_map = {i: masked_replace_to[0] for i in need_mask_idx}
-        # 所有在图片中出现过指代的 region 都 MASK 掉
-        need_mask_idx = np.where(np.array(mapping) != 0)[0]
+        # KevinHwang: get img_mask and txt_mask
+        img_mask1, txt_mask = _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb)
+        # 合并上原本 15% 的 mask
+        img_mask2 = _get_img_mask(self.mask_prob, num_bb)
+        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
 
-        # image input features
-        img_mask = _get_img_mask(self.mask_prob, num_bb)
-
-        # KevinHwang@220223:选中的 token 对应的 region 全部 MASK
-        for i in need_mask_idx:
-            img_mask[i] = True
+        # mask text
+        mask = self.txt_db.mask
+        txt_len = len(input_ids)
+        input_ids = [mask if txt_mask[k] else input_ids[k] for k in range(txt_len)]
+        # transfer input_ids to tensor from list
+        input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])
 
         img_mask_tgt = _get_img_tgt_mask(img_mask, len(input_ids))
 
@@ -415,12 +385,12 @@ class MrcDataset(DetectFeatTxtTokDataset):
         '''
 
         return (input_ids, img_feat, img_pos_feat,
-                img_soft_labels, attn_masks, img_mask, img_mask_tgt, replace_map)
+                img_soft_labels, attn_masks, img_mask, img_mask_tgt)
 
 
 def mrc_collate(inputs):
     (input_ids, img_feats, img_pos_feats, img_soft_labels,
-     attn_masks, img_masks, img_mask_tgts, replace_map) = map(list, unzip(inputs))
+     attn_masks, img_masks, img_mask_tgts) = map(list, unzip(inputs))
 
     txt_lens = [i.size(0) for i in input_ids]
     num_bbs = [f.size(0) for f in img_feats]
@@ -452,6 +422,5 @@ def mrc_collate(inputs):
              'gather_index': gather_index,
              'img_masks': img_masks,
              'img_mask_tgt': img_mask_tgt,
-             'label_targets': label_targets,
-             'replace_map': replace_map}
+             'label_targets': label_targets}
     return batch

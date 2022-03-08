@@ -1,9 +1,7 @@
 """
-Copyright (c) Microsoft Corporation.
-Licensed under the MIT license.
-
-MLM datasets
+Associate learning datasets
 """
+
 import random
 import sys
 
@@ -38,8 +36,16 @@ def _mask_img_feat(img_feat, img_masks):
     return img_feat_masked
 
 
+def _get_targets(img_masks, img_soft_label):
+    soft_label_dim = img_soft_label.size(-1)
+    img_masks_ext_for_label = img_masks.unsqueeze(-1).expand_as(img_soft_label)
+    label_targets = img_soft_label[img_masks_ext_for_label].contiguous().view(
+        -1, soft_label_dim)
+    return label_targets
+
+
 # KevinHwang@220306
-def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
+def _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 使用 argmax 取得每一个 region 的实体标签序号
     # background class should not be the target
     argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
@@ -48,42 +54,57 @@ def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
                         argmax_soft_labels]
     # 获取所有的实体 token 并去重
     obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
+    word_region_pairs = {}  # 保存需要进行交换的 word 和 region ，word 为键（NOTE: 注意 +1，要考虑到填充 [CLS] 后的情况）， region 为值
     txt_len = len(input_ids)
-    txt_mask = [False] * txt_len  # input_ids 的 mask 遮罩，True 为需要 mask 的
-    img_mask = [True] * num_bb  # region 的 mask 遮罩，True 为需要 mask 的
+    txt_swap = [False] * txt_len
+    img_swap = [False] * num_bb
+    img_mask = [False] * num_bb
+
     if len(obj_tokens) > 0:
-        # 选择出一种 token，将所有的该 token 掩码掉
+        # 选择出一种 token，将所有的该 token 与图片中实体替换
         # tar_token = random.sample(no_repeat, 1)[0]
 
         # 遍历所有的实体 token
         for tar_token in obj_tokens:
-            # 如果 input_ids 中有实体 token ，就将之 mask 并且保留对应的 region
+            # 如果 input_ids 中有实体 token ，就查找图片中对应的实体 region 进行替换，如果有多个对应的 region 就随机选一个
             for i, tk in enumerate(input_ids):
                 if tk == tar_token:
-                    txt_mask[i] = True
+                    txt_swap[i] = True
+                    tar_region_idxs = []
                     for j, rg in enumerate(converted_argmax):
                         if tar_token in rg:
-                            img_mask[j] = False
+                            tar_region_idxs.append(j)
+                    if len(tar_region_idxs) > 0:
+                        # NOTE: 注意 + 1，要考虑到填充[CLS] 后的情况
+                        tar_index = random.choice(tar_region_idxs)
+                        img_swap[tar_index] = True
+                        word_region_pairs[i + 1] = tar_index
 
-    # 对 img_mask 再做一次处理，除了确定要保留的，剩下的所有以 mask_prob 的概率保留
+    chosen_regions_idx = set(word_region_pairs.values())
+    # 获取真正需要 mask 掉的 region
     for i in range(num_bb):
-        if img_mask[i] and random.random() < mask_prob:
-            img_mask[i] = False
+        if i not in chosen_regions_idx and random.random() < mask_prob:
+            img_mask[i] = True
+    if not any(img_swap) and not any(img_mask):
+        # at least mask 1
+        img_mask[random.choice(range(num_bb))] = True
     '''
     # -------------------------------------------------[调试代码]-----------------------------------------------------
-    # img_mask_tgt:
+    # img_swap_tgt:
     print('obj_tokens:', obj_tokens)
     # obj_tokens: [4355, 4876, 16024, 8090, 17180, 5020, 4637, 24998, 2095, 3504, 13624, 4282, 1339, 3392, 7366,
     # 5324, 4694, 4705, 2146, 7404, 3439, 2928, 1520]
     print('argmax_soft_labels:', argmax_soft_labels)
     # argmax_soft_labels: [118, 248, 1330, 1066, 959, 1281, 1330, 959, 959, 959, 1010, 800, 327, 598, 909, 959, 959,
     # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
+    print('img_mask:', img_mask)
+    print('word_region_pairs:', word_region_pairs)
     # -----------------------------------------------[调试代码 END]---------------------------------------------------
     '''
-    return img_mask, txt_mask
+    return img_swap, txt_swap, img_mask, word_region_pairs
 
 
-def random_word(tokens, vocab_range, mask, txt_mask):
+def random_word(tokens, vocab_range, mask, txt_swap):
     """
     Masking some random tokens for Language Model task with probabilities as in
         the original BERT paper.
@@ -96,8 +117,9 @@ def random_word(tokens, vocab_range, mask, txt_mask):
 
     for i, token in enumerate(tokens):
         # 选中的实体 token 全部掩码，其余以 15% 概率掩码
-        if txt_mask[i]:
-            tokens[i] = mask
+        if txt_swap[i]:
+            # NOTE: 此处不会真正掩码，而是在通过 Embedder 后进行替换
+            # tokens[i] = mask
             output_label[i] = token
             continue
 
@@ -129,7 +151,7 @@ def random_word(tokens, vocab_range, mask, txt_mask):
     return tokens, output_label
 
 
-class MlmDataset(DetectFeatTxtTokDataset):
+class AlmDataset(DetectFeatTxtTokDataset):
     def __init__(self, txt_db, img_db):
         assert isinstance(txt_db, TxtTokLmdb)
         super().__init__(txt_db, img_db)
@@ -164,13 +186,16 @@ class MlmDataset(DetectFeatTxtTokDataset):
         # text input
         input_ids = example['input_ids']
 
-        # KevinHwang: get img_mask and txt_mask
-        img_mask, txt_mask = _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb)
+        # KevinHwang: get img_swap and txt_swap
+        img_swap, txt_swap, img_mask, word_region_pairs = _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb)
 
-        img_mask = torch.tensor(img_mask)
+        img_swap = torch.BoolTensor(img_swap)
+        img_mask = torch.BoolTensor(img_mask)
 
         # text input
-        input_ids, txt_labels = self.create_mlm_io(example['input_ids'], txt_mask)
+        input_ids, txt_labels = self.create_mlm_io(example['input_ids'], txt_swap)
+
+        img_mask_tgt = _get_img_tgt_mask(img_mask, len(input_ids))
 
         attn_masks = torch.ones(len(input_ids) + num_bb, dtype=torch.long)
         '''
@@ -217,19 +242,20 @@ class MlmDataset(DetectFeatTxtTokDataset):
         #                      1, 1, 1, 1])
         print('txt_labels: ', txt_labels)
         # txt_labels:  tensor([-1, -1, -1, -1, -1, -1, -1, -1, 1168, -1, -1])
-        print('img_mask:', img_mask)
-        # img_mask:
-        print('img_mask_tgt:', img_mask_tgt)
-        # img_mask_tgt:
+        print('img_swap:', img_swap)
+        # img_swap:
+        print('word_region_pairs:', word_region_pairs)
+        # word_region_pairs：
         exit(1)
         # -----------------------------------------------[调试代码 END]---------------------------------------------------
         '''
-        return input_ids, img_feat, img_pos_feat, attn_masks, txt_labels, img_mask
+        return (input_ids, img_feat, img_pos_feat,
+                img_soft_labels, attn_masks, txt_labels, img_swap, img_mask, word_region_pairs, img_mask_tgt)
 
-    def create_mlm_io(self, input_ids, txt_mask):
+    def create_mlm_io(self, input_ids, txt_swap):
         input_ids, txt_labels = random_word(input_ids,
                                             self.txt_db.v_range,
-                                            self.txt_db.mask, txt_mask)
+                                            self.txt_db.mask, txt_swap)
 
         input_ids = torch.tensor([self.txt_db.cls_]
                                  + input_ids
@@ -238,7 +264,7 @@ class MlmDataset(DetectFeatTxtTokDataset):
         return input_ids, txt_labels
 
 
-def mlm_collate(inputs):
+def alm_collate(inputs):
     """
     Return:
     :input_ids    (n, max_L) padded with 0
@@ -250,24 +276,31 @@ def mlm_collate(inputs):
     :attn_masks   (n, max_{L + num_bb}) padded with 0
     :txt_labels   (n, max_L) padded with -1
     """
-    (input_ids, img_feats, img_pos_feats, attn_masks, txt_labels, img_masks
-     ) = map(list, unzip(inputs))
+    (input_ids, img_feats, img_pos_feats, img_soft_labels,
+     attn_masks, txt_labels, img_swaps, img_masks, word_region_pairs, img_mask_tgts) = map(list, unzip(inputs))
 
-    # text batches
     txt_lens = [i.size(0) for i in input_ids]
+    num_bbs = [f.size(0) for f in img_feats]
+
     input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0)
-    txt_labels = pad_sequence(txt_labels, batch_first=True, padding_value=-1)
     position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long
                                 ).unsqueeze(0)
 
-    # image batches
-    num_bbs = [f.size(0) for f in img_feats]
     img_feat = pad_tensors(img_feats, num_bbs)
     img_pos_feat = pad_tensors(img_pos_feats, num_bbs)
-
-    # mask features(KevinHwang: copy from /data/mlm.py)
+    img_soft_label = pad_tensors(img_soft_labels, num_bbs)
     img_masks = pad_sequence(img_masks, batch_first=True, padding_value=0)
+    img_swaps = pad_sequence(img_swaps, batch_first=True, padding_value=0)
+
+    # 根据 img_masks 进行真正的掩码操作
     img_feat = _mask_img_feat(img_feat, img_masks)
+
+    # 将 img_masks 融合以 img_swaps ，获取最后预测需要用的 img_masks、img_mask_tgt、label_targets
+    img_masks = img_masks | img_swaps
+    img_mask_tgt = pad_sequence(img_mask_tgts,
+                                batch_first=True, padding_value=0)
+
+    label_targets = _get_targets(img_masks, img_soft_label)
 
     attn_masks = pad_sequence(attn_masks, batch_first=True, padding_value=0)
 
@@ -276,10 +309,14 @@ def mlm_collate(inputs):
     gather_index = get_gather_index(txt_lens, num_bbs, bs, max_tl, out_size)
 
     batch = {'input_ids': input_ids,
+
              'position_ids': position_ids,
              'img_feat': img_feat,
              'img_pos_feat': img_pos_feat,
              'attn_masks': attn_masks,
              'gather_index': gather_index,
-             'txt_labels': txt_labels}
+             'txt_labels': txt_labels,
+             'img_masks': img_masks,
+             'img_mask_tgt': img_mask_tgt,
+             'label_targets': label_targets}
     return batch

@@ -72,21 +72,19 @@ class UniterForPretraining(UniterPreTrainedModel):
         gather_index = batch['gather_index']
         if task == 'mlm':
             txt_labels = batch['txt_labels']
-            replace_map = batch['replace_map']
             return self.forward_mlm(input_ids, position_ids,
                                     img_feat, img_pos_feat,
                                     attention_mask, gather_index,
-                                    txt_labels, replace_map, compute_loss)
+                                    txt_labels, compute_loss)
         elif task == 'mrfr':
             img_mask_tgt = batch['img_mask_tgt']
             img_masks = batch['img_masks']
             mrfr_feat_target = batch['feat_targets']
-            replace_map = batch['replace_map']
             return self.forward_mrfr(input_ids, position_ids,
                                      img_feat, img_pos_feat,
                                      attention_mask, gather_index,
                                      img_masks, img_mask_tgt,
-                                     mrfr_feat_target, replace_map, compute_loss)
+                                     mrfr_feat_target, compute_loss)
         elif task == 'itm':
             targets = batch['targets']
             ot_inputs = batch['ot_inputs']
@@ -98,21 +96,20 @@ class UniterForPretraining(UniterPreTrainedModel):
             img_mask_tgt = batch['img_mask_tgt']
             img_masks = batch['img_masks']
             mrc_label_target = batch['label_targets']
-            replace_map = batch['replace_map']
             return self.forward_mrc(input_ids, position_ids,
                                     img_feat, img_pos_feat,
                                     attention_mask, gather_index,
                                     img_masks, img_mask_tgt,
-                                    mrc_label_target, task, replace_map, compute_loss)
+                                    mrc_label_target, task, compute_loss)
         else:
             raise ValueError('invalid task')
 
     def forward_mlm(self, input_ids, position_ids, img_feat, img_pos_feat,
                     attention_mask, gather_index,
-                    txt_labels, replace_map, compute_loss=True):
+                    txt_labels, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index, replace_map=replace_map, mlm_or_mrm=0,
+                                      attention_mask, gather_index,
                                       output_all_encoded_layers=False)
         # get only the text part
         sequence_output = sequence_output[:, :input_ids.size(1), :]
@@ -137,11 +134,10 @@ class UniterForPretraining(UniterPreTrainedModel):
 
     def forward_mrfr(self, input_ids, position_ids, img_feat, img_pos_feat,
                      attention_mask, gather_index, img_masks, img_mask_tgt,
-                     feat_targets, replace_map, compute_loss=True):
+                     feat_targets, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
                                       attention_mask, gather_index,
-                                      replace_map=replace_map, mlm_or_mrm=1,
                                       output_all_encoded_layers=False,
                                       img_masks=img_masks)
 
@@ -204,11 +200,10 @@ class UniterForPretraining(UniterPreTrainedModel):
 
     def forward_mrc(self, input_ids, position_ids, img_feat, img_pos_feat,
                     attention_mask, gather_index, img_masks, img_mask_tgt,
-                    label_targets, task, replace_map, compute_loss=True):
+                    label_targets, task, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
                                       attention_mask, gather_index,
-                                      replace_map=replace_map, mlm_or_mrm=1,
                                       output_all_encoded_layers=False,
                                       img_masks=img_masks)
 

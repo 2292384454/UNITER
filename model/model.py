@@ -17,13 +17,13 @@ from apex.normalization.fused_layer_norm import FusedLayerNorm
 
 from .layer import BertLayer, BertPooler
 
+
 logger = logging.getLogger(__name__)
 
 
 class UniterConfig(object):
     """Configuration class to store the configuration of a `UniterModel`.
     """
-
     def __init__(self,
                  vocab_size_or_config_json_file,  # “UniterModel”中“inputs_ids”的词表大小。
                  hidden_size=768,  # 编码器层和池化层的 size 。
@@ -118,7 +118,6 @@ class UniterPreTrainedModel(nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
     """
-
     def __init__(self, config, *inputs, **kwargs):
         super().__init__()
         if not isinstance(config, UniterConfig):
@@ -194,7 +193,6 @@ class UniterPreTrainedModel(nn.Module):
             for name, child in module._modules.items():
                 if child is not None:
                     load(child, prefix + name + '.')
-
         start_prefix = ''
         if not hasattr(model, 'bert') and any(s.startswith('bert.')
                                               for s in state_dict.keys()):
@@ -343,28 +341,12 @@ class UniterModel(UniterPreTrainedModel):
 
     def _compute_img_txt_embeddings(self, input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    gather_index,
-                                    replace_map, mlm_or_mrm,
-                                    img_masks=None,
+                                    gather_index, img_masks=None,
                                     txt_type_ids=None, img_type_ids=None):
         txt_emb = self._compute_txt_embeddings(
             input_ids, position_ids, txt_type_ids)
         img_emb = self._compute_img_embeddings(
             img_feat, img_pos_feat, img_masks, img_type_ids)
-
-        # # NOTE: 对掩码实体 token embedding 替换成对应的 region embedding
-        # if replace_map is not None:
-        #     if mlm_or_mrm == 0:
-        #         for i, the_map in enumerate(replace_map):
-        #             if the_map is not None:
-        #                 for k, v in the_map.items():
-        #                     txt_emb[i][k] = img_emb[i][v]
-        #     elif mlm_or_mrm == 1:
-        #         for i, the_map in enumerate(replace_map):
-        #             if the_map is not None:
-        #                 for k, v in the_map.items():
-        #                     img_emb[i][k] = txt_emb[i][v]
-
         # align back to most compact input
         gather_index = gather_index.unsqueeze(-1).expand(
             -1, -1, self.config.hidden_size)
@@ -373,14 +355,12 @@ class UniterModel(UniterPreTrainedModel):
         #  768] ，经过 torch.gather 操作后变为 [88,34,768] ，但是这么做的目的是什么呢？ 上面注释中的 most compact input 是什么样的呢？
         embedding_output = torch.gather(torch.cat([txt_emb, img_emb], dim=1),
                                         dim=1, index=gather_index)
-
         return embedding_output
 
     def forward(self, input_ids, position_ids,
                 img_feat, img_pos_feat,
-                attention_mask, gather_index=None,
-                replace_map=None, mlm_or_mrm=2,  # mlm_or_mrm: mlm时0，mrm时1，其他时候2
-                img_masks=None, output_all_encoded_layers=True,
+                attention_mask, gather_index=None, img_masks=None,
+                output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
         # compute self-attention mask
         extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
@@ -401,9 +381,7 @@ class UniterModel(UniterPreTrainedModel):
             embedding_output = self._compute_img_txt_embeddings(
                 input_ids, position_ids,
                 img_feat, img_pos_feat,
-                gather_index,
-                replace_map, mlm_or_mrm,
-                img_masks, txt_type_ids, img_type_ids)
+                gather_index, img_masks, txt_type_ids, img_type_ids)
 
         encoded_layers = self.encoder(
             embedding_output, extended_attention_mask,
