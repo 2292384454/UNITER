@@ -43,7 +43,7 @@ def _mask_img_feat(img_feat, img_masks):
 
 
 # KevinHwang@220306
-def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
+def _get_obj_img_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 使用 argmax 取得每一个 region 的实体标签序号
     # background class should not be the target
     argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
@@ -53,7 +53,6 @@ def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 获取所有的实体 token 并去重
     obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
     txt_len = len(input_ids)
-    txt_mask = [True] * txt_len  # input_ids 的 mask 遮罩，True 为需要 mask 的
     img_mask = [False] * num_bb  # region 的 mask 遮罩，True 为需要 mask 的
     if len(obj_tokens) > 0:
         # 选择出一种 token，将所有的该 token 掩码掉
@@ -64,15 +63,9 @@ def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
             # 如果 input_ids 中有实体 token ，就将之保留并且 mask 对应的 region
             for i, tk in enumerate(input_ids):
                 if tk == tar_token:
-                    txt_mask[i] = False
                     for j, rg in enumerate(converted_argmax):
                         if tar_token in rg:
                             img_mask[j] = True
-
-    # 对 txt_mask 再做一次处理，除了确定要保留的，剩下的所有以 mask_prob 的概率保留
-    for i in range(txt_len):
-        if txt_mask[i] and random.random() < mask_prob:
-            txt_mask[i] = False
     '''
     # -------------------------------------------------[调试代码]-----------------------------------------------------
     # img_mask_tgt:
@@ -84,7 +77,7 @@ def _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
     # -----------------------------------------------[调试代码 END]---------------------------------------------------
     '''
-    return img_mask, txt_mask
+    return img_mask
 
 
 class MrfrDataset(DetectFeatTxtTokDataset):
@@ -118,18 +111,13 @@ class MrfrDataset(DetectFeatTxtTokDataset):
         # KevinHwang@220223: 改进后的 img input ，可以取得 img_soft_labels
         img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
-        # KevinHwang: get img_mask and txt_mask
-        img_mask1, txt_mask = _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb)
+        # KevinHwang: get obj_img_mask
+        img_mask1 = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
         # 合并上原本 15% 的 mask
         img_mask2 = _get_img_mask(self.mask_prob, num_bb)
         img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
 
-        # mask text
-        mask = self.txt_db.mask
-        txt_len = len(input_ids)
-        input_ids = [mask if txt_mask[k] else input_ids[k] for k in range(txt_len)]
         # transfer input_ids to tensor from list
-        # NOTE：一定要先对文本掩码再进行这一步，不然可能将[CLS]或者[SEP]掩码掉
         input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])
 
         img_mask_tgt = _get_img_tgt_mask(img_mask, len(input_ids))
@@ -301,16 +289,12 @@ class MrcDataset(DetectFeatTxtTokDataset):
         # KevinHwang@220223: 改进后的 img input ，可以取得 img_soft_labels
         img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
-        # KevinHwang: get img_mask and txt_mask
-        img_mask1, txt_mask = _get_img_and_txt_mask(input_ids, img_soft_labels, num_bb)
+        # KevinHwang: get obj_img_mask
+        img_mask1 = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
         # 合并上原本 15% 的 mask
         img_mask2 = _get_img_mask(self.mask_prob, num_bb)
         img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
 
-        # mask text
-        mask = self.txt_db.mask
-        txt_len = len(input_ids)
-        input_ids = [mask if txt_mask[k] else input_ids[k] for k in range(txt_len)]
         # transfer input_ids to tensor from list
         input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])
 

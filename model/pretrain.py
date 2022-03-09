@@ -18,6 +18,7 @@ from .ot import optimal_transport_dist
 
 class RegionFeatureRegression(nn.Module):
     " for MRM"
+
     def __init__(self, hidden_size, feat_dim, img_linear_weight):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
@@ -35,6 +36,7 @@ class RegionFeatureRegression(nn.Module):
 
 class RegionClassification(nn.Module):
     " for MRC(-kl)"
+
     def __init__(self, hidden_size, label_dim):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
@@ -49,6 +51,7 @@ class RegionClassification(nn.Module):
 
 class UniterForPretraining(UniterPreTrainedModel):
     """ UNITER pretraining """
+
     def __init__(self, config, img_dim, img_label_dim):
         super().__init__(config)
         self.uniter = UniterModel(config, img_dim)
@@ -72,10 +75,11 @@ class UniterForPretraining(UniterPreTrainedModel):
         gather_index = batch['gather_index']
         if task == 'mlm':
             txt_labels = batch['txt_labels']
+            word_region_pairs = batch['word_region_pairs']
             return self.forward_mlm(input_ids, position_ids,
                                     img_feat, img_pos_feat,
                                     attention_mask, gather_index,
-                                    txt_labels, compute_loss)
+                                    txt_labels, word_region_pairs, compute_loss)
         elif task == 'mrfr':
             img_mask_tgt = batch['img_mask_tgt']
             img_masks = batch['img_masks']
@@ -106,10 +110,10 @@ class UniterForPretraining(UniterPreTrainedModel):
 
     def forward_mlm(self, input_ids, position_ids, img_feat, img_pos_feat,
                     attention_mask, gather_index,
-                    txt_labels, compute_loss=True):
+                    txt_labels, word_region_pairs, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index,
+                                      attention_mask, gather_index, word_region_pairs=word_region_pairs,
                                       output_all_encoded_layers=False)
         # get only the text part
         sequence_output = sequence_output[:, :input_ids.size(1), :]

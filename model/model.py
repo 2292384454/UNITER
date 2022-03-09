@@ -17,13 +17,13 @@ from apex.normalization.fused_layer_norm import FusedLayerNorm
 
 from .layer import BertLayer, BertPooler
 
-
 logger = logging.getLogger(__name__)
 
 
 class UniterConfig(object):
     """Configuration class to store the configuration of a `UniterModel`.
     """
+
     def __init__(self,
                  vocab_size_or_config_json_file,  # “UniterModel”中“inputs_ids”的词表大小。
                  hidden_size=768,  # 编码器层和池化层的 size 。
@@ -118,6 +118,7 @@ class UniterPreTrainedModel(nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
     """
+
     def __init__(self, config, *inputs, **kwargs):
         super().__init__()
         if not isinstance(config, UniterConfig):
@@ -193,6 +194,7 @@ class UniterPreTrainedModel(nn.Module):
             for name, child in module._modules.items():
                 if child is not None:
                     load(child, prefix + name + '.')
+
         start_prefix = ''
         if not hasattr(model, 'bert') and any(s.startswith('bert.')
                                               for s in state_dict.keys()):
@@ -341,12 +343,21 @@ class UniterModel(UniterPreTrainedModel):
 
     def _compute_img_txt_embeddings(self, input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    gather_index, img_masks=None,
+                                    gather_index, word_region_pairs=None, img_masks=None,
                                     txt_type_ids=None, img_type_ids=None):
         txt_emb = self._compute_txt_embeddings(
             input_ids, position_ids, txt_type_ids)
         img_emb = self._compute_img_embeddings(
             img_feat, img_pos_feat, img_masks, img_type_ids)
+
+        # KevinHwang:进行替换
+        # 对掩码实体 token embedding 替换成对应的 region embedding
+        if word_region_pairs is not None:
+            for i, map in enumerate(word_region_pairs):
+                if map is not None:
+                    for k, v in map.items():
+                        txt_emb[i][k] = img_emb[i][v]
+
         # align back to most compact input
         gather_index = gather_index.unsqueeze(-1).expand(
             -1, -1, self.config.hidden_size)
@@ -359,7 +370,7 @@ class UniterModel(UniterPreTrainedModel):
 
     def forward(self, input_ids, position_ids,
                 img_feat, img_pos_feat,
-                attention_mask, gather_index=None, img_masks=None,
+                attention_mask, gather_index=None, word_region_pairs=None, img_masks=None,
                 output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
         # compute self-attention mask
@@ -381,7 +392,7 @@ class UniterModel(UniterPreTrainedModel):
             embedding_output = self._compute_img_txt_embeddings(
                 input_ids, position_ids,
                 img_feat, img_pos_feat,
-                gather_index, img_masks, txt_type_ids, img_type_ids)
+                gather_index, word_region_pairs, img_masks, txt_type_ids, img_type_ids)
 
         encoded_layers = self.encoder(
             embedding_output, extended_attention_mask,

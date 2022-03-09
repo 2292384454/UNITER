@@ -1,5 +1,5 @@
 {
-    "output_dir": "/storage/pretrain/AL_base_0307_2",
+    "output_dir": "/storage/pretrain/mask_obj_in_mlm_mrm",
     "model_config": "/src/config/uniter-base.json",
     "checkpoint": "/pretrain/uniter-base-init.pt",
     "mrm_prob": 0.15,
@@ -48,9 +48,9 @@
             ],
             "mix_ratio": [
                 2,
-                3,
                 2,
-                2
+                1,
+                1
             ]
         },
         {
@@ -69,9 +69,9 @@
             ],
             "mix_ratio": [
                 2,
-                3,
                 2,
-                2
+                1,
+                1
             ]
         }
     ],
