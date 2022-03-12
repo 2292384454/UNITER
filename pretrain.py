@@ -11,6 +11,7 @@ import math
 import os
 from os.path import exists, join
 from time import time
+import numpy as np
 
 import torch
 from torch.utils.data import DataLoader
@@ -71,12 +72,14 @@ def build_dataloader_itm(dataset, collate_fn, is_train, opts):
 
 def build_mlm_dataset(txt_db, img_db, is_train, opts):
     if is_train:
+        collate_fn = mlm_collate
         datasets = [MlmDataset(t, i) for t, i in zip(txt_db, img_db)]
         dataset = ConcatDatasetWithLens(datasets)
     else:
+        collate_fn = mlm_collate
         dataset = MlmDataset(txt_db, img_db)
 
-    return dataset, mlm_collate
+    return dataset, collate_fn
 
 
 def build_mrfr_dataset(txt_db, img_db, is_train, opts):
@@ -114,10 +117,12 @@ def build_itm_dataset(txt_db, img_db, is_train, opts):
 
 def build_wrc_dataset(txt_db, img_db, is_train, opts):
     if is_train:
-        datasets = [WrcDataset(t, i) for t, i in zip(txt_db, img_db)]
+        datasets = [WrcDataset(t, i)
+                    for t, i in zip(txt_db, img_db)]
         dataset = ConcatDatasetWithLens(datasets)
     else:
         dataset = WrcDataset(txt_db, img_db)
+
     return dataset, wrc_collate
 
 
@@ -161,8 +166,8 @@ def create_dataloaders(datasets, is_train, opts, all_img_dbs=None):
             else:
                 raise ValueError(f'Undefined task {task}')
 
-            LOGGER.info(f"{len(dataset[0])*hvd.size()} samples loaded")
-            if task.startswith('itm') or task.startswith('wrc'):
+            LOGGER.info(f"{len(dataset[0]) * hvd.size()} samples loaded")
+            if task.startswith('itm'):
                 # itm handles distributed training in dset not sampler
                 loader = build_dataloader_itm(*dataset, is_train, opts)
             else:
@@ -184,12 +189,12 @@ def main(opts):
     opts.rank = rank
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
-                    device, n_gpu, hvd.rank(), opts.fp16))
+        device, n_gpu, hvd.rank(), opts.fp16))
 
     if opts.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, "
                          "should be >= 1".format(
-                            opts.gradient_accumulation_steps))
+            opts.gradient_accumulation_steps))
 
     set_random_seed(opts.seed)
 
@@ -204,45 +209,18 @@ def main(opts):
         pbar = NoOp()
         model_saver = NoOp()
 
-    # KevinHwang:The following line of code is equivalent to
-    # this triple for loop:
-    # for datasets in [opts.train_datasets, opts.val_datasets]
-    #   for dset in datasets
-    #       for db in dset['db']
-    #           all_dbs.append(db)
-    #
-
     all_dbs = [db for datasets in [opts.train_datasets, opts.val_datasets]
                for dset in datasets for db in dset['db']]
-    # all_dbs = ['/txt/pretrain_coco_train.db/','/txt/pretrain_coco_restval.db/',
-    # '/txt/pretrain_vg_train.db/','/txt/pretrain_coco_val.db/', '/txt/pretrain_vg_val.db/']
 
     tokenizer = json.load(open(f'{all_dbs[0]}/meta.json'))['bert']
     assert all(tokenizer == json.load(open(f'{db}/meta.json'))['bert']
                for db in all_dbs)
-    # tokenizer = 'bert-base-cased'
 
     # build data loaders
     train_dataloaders, all_img_dbs = create_dataloaders(
         opts.train_datasets, True, opts)
-    # {'itm_coco': (<torch.utils.data.dataloader.DataLoader object at 0x7f251112d100>, 2),
-    # 'mlm_coco': (<torch.utils.data.dataloader.DataLoader object at 0x7f2511134520>, 2),
-    # 'mrfr_coco': (<torch.utils.data.dataloader.DataLoader object at 0x7f2511134640>, 1),
-    # 'mrckl_coco': (<torch.utils.data.dataloader.DataLoader object at 0x7f25111349a0>, 1),
-    # 'itm_vg': (<torch.utils.data.dataloader.DataLoader object at 0x7f2511134b80>, 2),
-    # 'mlm_vg': (<torch.utils.data.dataloader.DataLoader object at 0x7f2511134d90>, 2),
-    # 'mrfr_vg': (<torch.utils.data.dataloader.DataLoader object at 0x7f176f854040>, 1),
-    # 'mrckl_vg': (<torch.utils.data.dataloader.DataLoader object at 0x7f176f8542e0>, 1)}
     val_dataloaders, _ = create_dataloaders(
         opts.val_datasets, False, opts, all_img_dbs)
-    # {'itm_coco': <data.loader.PrefetchLoader object at 0x7f024a70f1c0>,
-    # 'mlm_coco': <data.loader.PrefetchLoader object at 0x7f024a70f3a0>,
-    # 'mrfr_coco': <data.loader.PrefetchLoader object at 0x7f024a70f580>,
-    # 'mrckl_coco': <data.loader.PrefetchLoader object at 0x7f024a70f7c0>,
-    # 'itm_vg': <data.loader.PrefetchLoader object at 0x7f024a70fac0>,
-    # 'mlm_vg': <data.loader.PrefetchLoader object at 0x7f024a70fca0>,
-    # 'mrfr_vg': <data.loader.PrefetchLoader object at 0x7f024a70fe80>,
-    # 'mrckl_vg': <data.loader.PrefetchLoader object at 0x7f00c55fe100>}
     meta_loader = MetaLoader(train_dataloaders,
                              accum_steps=opts.gradient_accumulation_steps,
                              distributed=n_gpu > 1)
@@ -265,10 +243,9 @@ def main(opts):
     # Prepare optimizer
     optimizer = build_optimizer(model, opts)
     task2scaler = {t: i for i, t in enumerate(train_dataloaders.keys())}
-    # 基于 Apex 的混合精度加速
     model, optimizer = amp.initialize(model, optimizer,
                                       num_losses=len(task2scaler),
-                                      enabled=opts.fp16, opt_level='O2')
+                                      enabled=opts.fp16, opt_level='O1')
 
     global_step = 0
     LOGGER.info(f"***** Running training with {n_gpu} GPUs *****")
@@ -304,7 +281,6 @@ def main(opts):
         n_examples[name] += batch['input_ids'].size(0)
         n_in_units[name] += (batch['attn_masks'] == 1).sum().item()
         task = name.split('_')[0]
-        # 计算 loss
         loss = model(batch, task=task, compute_loss=True)
         if task.startswith('itm'):
             # OT
@@ -334,7 +310,7 @@ def main(opts):
             loss = loss.mean()  # loss is not normalized in model
 
         # backward pass
-        delay_unscale = (step+1) % opts.gradient_accumulation_steps != 0
+        delay_unscale = (step + 1) % opts.gradient_accumulation_steps != 0
         with amp.scale_loss(loss, optimizer, delay_unscale=delay_unscale,
                             loss_id=task2scaler[name]) as scaled_loss:
             scaled_loss.backward()
@@ -527,6 +503,27 @@ def validate_mrc(model, val_loader, task):
     return val_log
 
 
+@torch.no_grad()
+def validate_wrc(model, val_loader):
+    LOGGER.info("start running WRC validation...")
+    val_loss = 0
+    n_ex = 0
+    tem = -9999
+    st = time()
+    for i, batch in enumerate(val_loader):
+        loss = model(batch, task='wrc', compute_loss=True)
+        val_loss += loss.sum().item()
+        n_ex += len(batch['input_ids'])
+    val_loss = sum(all_gather_list(val_loss))
+    n_ex = sum(all_gather_list(n_ex))
+    tot_time = time() - st
+    val_loss /= n_ex
+    val_log = {'loss': val_loss}
+    LOGGER.info(f"validation finished in {int(tot_time)} seconds, "
+                f"loss: {val_loss:.6f}")
+    return val_log
+
+
 def compute_accuracy_for_soft_targets(out, labels):
     outputs = out.max(dim=-1)[1]
     labels = labels.max(dim=-1)[1]  # argmax
@@ -579,36 +576,6 @@ def validate_itm(model, val_loader):
         val_log['valid/ot_loss'] = tot_ot_loss / n_ex
         val_log['valid/ot_pos'] = tot_ot_pos / n_ex
         val_log['valid/ot_neg'] = tot_ot_neg / n_ex
-
-    LOGGER.info(f"validation finished in {int(tot_time)} seconds, "
-                f"score: {val_acc * 100:.2f}")
-    return val_log
-
-
-@torch.no_grad()
-def validate_wrc(model, val_loader):
-    LOGGER.info("start running WRC validation...")
-    val_loss = 0
-    tot_score = 0
-    n_ex = 0
-    st = time()
-    for i, batch in enumerate(val_loader):
-        scores = model(batch, task='wrc', compute_loss=False)
-        targets = batch['targets']
-        loss = F.cross_entropy(scores, targets, reduction='sum')
-        val_loss += loss.item()
-
-        tot_score += (scores.max(dim=-1)[1] == targets).sum().item()
-        n_ex += len(targets)
-    val_loss = sum(all_gather_list(val_loss))
-    tot_score = sum(all_gather_list(tot_score))
-    n_ex = sum(all_gather_list(n_ex))
-    tot_time = time() - st
-    val_loss /= n_ex
-    val_acc = tot_score / n_ex
-    val_log = {'valid/loss': val_loss,
-               'valid/acc': val_acc,
-               'valid/ex_per_s': n_ex / tot_time}
 
     LOGGER.info(f"validation finished in {int(tot_time)} seconds, "
                 f"score: {val_acc * 100:.2f}")

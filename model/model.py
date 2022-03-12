@@ -282,8 +282,8 @@ class UniterImageEmbeddings(nn.Module):
             mask = self.mask_embedding(img_masks.long())
             img_feat = img_feat + mask
 
-        transformed_im = self.img_layer_norm(self.img_linear(img_feat))
-        transformed_pos = self.pos_layer_norm(self.pos_linear(img_pos_feat))
+        transformed_im = self.img_layer_norm(self.img_linear(img_feat).float())
+        transformed_pos = self.pos_layer_norm(self.pos_linear(img_pos_feat).float())
         embeddings = transformed_im + transformed_pos + type_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -343,21 +343,12 @@ class UniterModel(UniterPreTrainedModel):
 
     def _compute_img_txt_embeddings(self, input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    gather_index, word_region_pairs=None, img_masks=None,
+                                    gather_index, img_masks=None,
                                     txt_type_ids=None, img_type_ids=None):
         txt_emb = self._compute_txt_embeddings(
             input_ids, position_ids, txt_type_ids)
         img_emb = self._compute_img_embeddings(
             img_feat, img_pos_feat, img_masks, img_type_ids)
-
-        # KevinHwang:进行替换
-        # 对掩码实体 token embedding 替换成对应的 region embedding
-        if word_region_pairs is not None:
-            for i, map in enumerate(word_region_pairs):
-                if map is not None:
-                    for k, v in map.items():
-                        txt_emb[i][k] = img_emb[i][v]
-
         # align back to most compact input
         gather_index = gather_index.unsqueeze(-1).expand(
             -1, -1, self.config.hidden_size)
@@ -370,7 +361,7 @@ class UniterModel(UniterPreTrainedModel):
 
     def forward(self, input_ids, position_ids,
                 img_feat, img_pos_feat,
-                attention_mask, gather_index=None, word_region_pairs=None, img_masks=None,
+                attention_mask, gather_index=None, img_masks=None,
                 output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
         # compute self-attention mask
@@ -392,7 +383,7 @@ class UniterModel(UniterPreTrainedModel):
             embedding_output = self._compute_img_txt_embeddings(
                 input_ids, position_ids,
                 img_feat, img_pos_feat,
-                gather_index, word_region_pairs, img_masks, txt_type_ids, img_type_ids)
+                gather_index, img_masks, txt_type_ids, img_type_ids)
 
         encoded_layers = self.encoder(
             embedding_output, extended_attention_mask,

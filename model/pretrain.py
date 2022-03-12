@@ -22,14 +22,15 @@ class RegionFeatureRegression(nn.Module):
     def __init__(self, hidden_size, feat_dim, img_linear_weight):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
-                                 GELU(),
-                                 LayerNorm(hidden_size, eps=1e-12))
+                                 GELU(), )
+        self.norm = LayerNorm(hidden_size, eps=1e-12)
 
         self.weight = img_linear_weight
         self.bias = nn.Parameter(torch.zeros(feat_dim))
 
     def forward(self, input_):
-        hidden = self.net(input_)
+        hidden1 = self.net(input_)
+        hidden = self.norm(hidden1.float())
         output = F.linear(hidden, self.weight.t(), self.bias)
         return output
 
@@ -40,12 +41,14 @@ class RegionClassification(nn.Module):
     def __init__(self, hidden_size, label_dim):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(hidden_size, hidden_size),
-                                 GELU(),
-                                 LayerNorm(hidden_size, eps=1e-12),
-                                 nn.Linear(hidden_size, label_dim))
+                                 GELU(), )
+        self.norm = LayerNorm(hidden_size, eps=1e-12)
+        self.liner = nn.Linear(hidden_size, label_dim)
 
     def forward(self, input_):
-        output = self.net(input_)
+        net_out = self.net(input_)
+        norm_out = self.norm(net_out.float())
+        output = self.liner(norm_out)
         return output
 
 
@@ -63,6 +66,7 @@ class UniterForPretraining(UniterPreTrainedModel):
         self.region_classifier = RegionClassification(
             config.hidden_size, img_label_dim)
         self.itm_output = nn.Linear(config.hidden_size, 2)
+        self.temp = nn.Parameter(torch.ones([]).cuda() * 0.07)
         self.apply(self.init_weights)
 
     def forward(self, batch, task, compute_loss=True):
@@ -75,11 +79,10 @@ class UniterForPretraining(UniterPreTrainedModel):
         gather_index = batch['gather_index']
         if task == 'mlm':
             txt_labels = batch['txt_labels']
-            word_region_pairs = batch['word_region_pairs']
             return self.forward_mlm(input_ids, position_ids,
                                     img_feat, img_pos_feat,
                                     attention_mask, gather_index,
-                                    txt_labels, word_region_pairs, compute_loss)
+                                    txt_labels, compute_loss)
         elif task == 'mrfr':
             img_mask_tgt = batch['img_mask_tgt']
             img_masks = batch['img_masks']
@@ -105,15 +108,20 @@ class UniterForPretraining(UniterPreTrainedModel):
                                     attention_mask, gather_index,
                                     img_masks, img_mask_tgt,
                                     mrc_label_target, task, compute_loss)
+        elif task.startswith('wrc'):
+            word_region_maps = batch['word_region_maps']
+            return self.forward_wrc(input_ids, position_ids, img_feat, img_pos_feat,
+                                    attention_mask, gather_index, word_region_maps,
+                                    compute_loss)
         else:
             raise ValueError('invalid task')
 
     def forward_mlm(self, input_ids, position_ids, img_feat, img_pos_feat,
                     attention_mask, gather_index,
-                    txt_labels, word_region_pairs, compute_loss=True):
+                    txt_labels, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index, word_region_pairs=word_region_pairs,
+                                      attention_mask, gather_index,
                                       output_all_encoded_layers=False)
         # get only the text part
         sequence_output = sequence_output[:, :input_ids.size(1), :]
@@ -167,34 +175,36 @@ class UniterForPretraining(UniterPreTrainedModel):
         pooled_output = self.uniter.pooler(sequence_output)
         itm_scores = self.itm_output(pooled_output)
 
-        # OT loss
-        if ot_inputs is not None:
-            ot_scatter = ot_inputs['ot_scatter']
-
-            b = sequence_output.size(0)
-            tl = input_ids.size(1)
-            il = img_feat.size(1)
-            max_l = max(ot_inputs['scatter_max'] + 1, tl + il)
-
-            ot_scatter = ot_scatter.unsqueeze(-1).expand_as(sequence_output)
-            ctx_emb = torch.zeros(b, max_l, self.config.hidden_size,
-                                  dtype=sequence_output.dtype,
-                                  device=sequence_output.device
-                                  ).scatter_(dim=1, index=ot_scatter,
-                                             src=sequence_output)
-            txt_emb = ctx_emb[:, :tl, :]
-            img_emb = ctx_emb[:, tl:tl + il, :]
-
-            txt_pad = ot_inputs['txt_pad']
-            img_pad = ot_inputs['img_pad']
-            # NOTE: run in fp32 for stability
-            ot_dist = optimal_transport_dist(txt_emb.float(), img_emb.float(),
-                                             txt_pad, img_pad).to(txt_emb)
-            ot_pos_dist = ot_dist.masked_select(targets == 1)
-            ot_neg_dist = ot_dist.masked_select(targets == 0)
-            ot_loss = (ot_pos_dist, ot_neg_dist)
-        else:
-            ot_loss = None
+        # 取消 OT WRA
+        # # OT loss
+        # if ot_inputs is not None:
+        #     ot_scatter = ot_inputs['ot_scatter']
+        #
+        #     b = sequence_output.size(0)
+        #     tl = input_ids.size(1)
+        #     il = img_feat.size(1)
+        #     max_l = max(ot_inputs['scatter_max'] + 1, tl + il)
+        #
+        #     ot_scatter = ot_scatter.unsqueeze(-1).expand_as(sequence_output)
+        #     ctx_emb = torch.zeros(b, max_l, self.config.hidden_size,
+        #                           dtype=sequence_output.dtype,
+        #                           device=sequence_output.device
+        #                           ).scatter_(dim=1, index=ot_scatter,
+        #                                      src=sequence_output)
+        #     txt_emb = ctx_emb[:, :tl, :]
+        #     img_emb = ctx_emb[:, tl:tl + il, :]
+        #
+        #     txt_pad = ot_inputs['txt_pad']
+        #     img_pad = ot_inputs['img_pad']
+        #     # NOTE: run in fp32 for stability
+        #     ot_dist = optimal_transport_dist(txt_emb.float(), img_emb.float(),
+        #                                      txt_pad, img_pad).to(txt_emb)
+        #     ot_pos_dist = ot_dist.masked_select(targets == 1)
+        #     ot_neg_dist = ot_dist.masked_select(targets == 0)
+        #     ot_loss = (ot_pos_dist, ot_neg_dist)
+        # else:
+        #     ot_loss = None
+        ot_loss = None
 
         if compute_loss:
             itm_loss = F.cross_entropy(itm_scores, targets, reduction='none')
@@ -231,3 +241,51 @@ class UniterForPretraining(UniterPreTrainedModel):
             return mrc_loss
         else:
             return prediction_soft_label
+
+    def forward_wrc(self, input_ids, position_ids, img_feat, img_pos_feat,
+                    attention_mask, gather_index, word_region_maps,
+                    compute_loss=True):
+        # 将 self.temp 范围限制到 0.001 到 0.5 之间，该操作不计入 track 梯度
+        with torch.no_grad():
+            self.temp.clamp_(0.001, 0.5)
+
+        sequence_output = self.uniter(input_ids, position_ids,
+                                      img_feat, img_pos_feat,
+                                      attention_mask, gather_index,
+                                      output_all_encoded_layers=False)  # sequence_output.size(): torch.Size([112, 44, 768])
+        batch_size = sequence_output.size(0)
+        max_txt_len = input_ids.size(1)
+        max_img_len = img_feat.size(1)
+
+        # 先将 sequence_output 形状还原
+        index = gather_index.unsqueeze(-1).expand(-1, -1, self.config.hidden_size)
+        txt_img_output = torch.zeros(batch_size, max_txt_len + max_img_len, self.config.hidden_size,
+                                     dtype=torch.float32).cuda().scatter_(1, index, sequence_output)
+
+        # 获取图像和文本对应的输出
+        txt_output = txt_img_output[:, :max_txt_len, :]
+        img_output = txt_img_output[:, max_txt_len:, :]
+
+        # 进行归一化
+        txt_output = F.normalize(txt_output, p=2, dim=2)
+        img_output = F.normalize(img_output, p=2, dim=2)
+
+        # 对 img_output 进行转置
+        img_output = torch.transpose(img_output, 1, 2)
+
+        # 计算向量乘积
+        mat = torch.bmm(txt_output, img_output) / self.temp
+
+        # 选择正样本对
+        mat_mask = torch.zeros_like(mat)
+        for i in range(batch_size):
+            for k, v in word_region_maps[i].items():
+                for j in v:
+                    mat_mask[i][k][j] = 1
+        # 对 mat 和 mat_mask 进行 flatten
+        mat = mat.flatten(1)
+        mat_mask = mat_mask.flatten(1)
+
+        wrc_loss = -torch.mean(F.log_softmax(mat, dim=1) * mat_mask, dim=1)
+
+        return wrc_loss

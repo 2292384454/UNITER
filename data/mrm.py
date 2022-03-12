@@ -53,7 +53,7 @@ def _get_obj_img_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 获取所有的实体 token 并去重
     obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
     txt_len = len(input_ids)
-    img_mask = [False] * num_bb  # region 的 mask 遮罩，True 为需要 mask 的
+    obj_img_mask = [False] * num_bb  # region 的 mask 遮罩，True 为需要 mask 的
     if len(obj_tokens) > 0:
         # 选择出一种 token，将所有的该 token 掩码掉
         # tar_token = random.sample(no_repeat, 1)[0]
@@ -65,7 +65,7 @@ def _get_obj_img_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
                 if tk == tar_token:
                     for j, rg in enumerate(converted_argmax):
                         if tar_token in rg:
-                            img_mask[j] = True
+                            obj_img_mask[j] = True
     '''
     # -------------------------------------------------[调试代码]-----------------------------------------------------
     # img_mask_tgt:
@@ -77,7 +77,7 @@ def _get_obj_img_mask(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
     # -----------------------------------------------[调试代码 END]---------------------------------------------------
     '''
-    return img_mask
+    return obj_img_mask
 
 
 class MrfrDataset(DetectFeatTxtTokDataset):
@@ -112,10 +112,10 @@ class MrfrDataset(DetectFeatTxtTokDataset):
         img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
         # KevinHwang: get obj_img_mask
-        img_mask1 = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
+        obj_img_mask = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
         # 合并上原本 15% 的 mask
         img_mask2 = _get_img_mask(self.mask_prob, num_bb)
-        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
+        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(obj_img_mask, img_mask2)])
 
         # transfer input_ids to tensor from list
         input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])
@@ -290,10 +290,10 @@ class MrcDataset(DetectFeatTxtTokDataset):
         img_feat, img_pos_feat, img_soft_labels, num_bb = self._get_img_feat(example['img_fname'])
 
         # KevinHwang: get obj_img_mask
-        img_mask1 = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
+        obj_img_mask = _get_obj_img_mask(input_ids, img_soft_labels, num_bb)
         # 合并上原本 15% 的 mask
         img_mask2 = _get_img_mask(self.mask_prob, num_bb)
-        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(img_mask1, img_mask2)])
+        img_mask = torch.tensor([(res1 or res2) for res1, res2 in zip(obj_img_mask, img_mask2)])
 
         # transfer input_ids to tensor from list
         input_ids = torch.tensor([self.txt_db.cls_] + input_ids + [self.txt_db.sep])

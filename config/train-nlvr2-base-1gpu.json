@@ -5,7 +5,7 @@
     "val_img_db": "/img/nlvr2_dev/",
     "test_txt_db": "/txt/nlvr2_test1.db",
     "test_img_db": "/img/nlvr2_test/",
-    "checkpoint": "/storage/pretrain/contrastive_mlmalltoken_0306/ckpt/model_step_55000.pt",
+    "checkpoint": "/storage/pretrain/pretrain0311/ckpt/model_step_70000.pt",
     "model_config": "/src/config/uniter-base.json",
     "model": "paired-attn",
     "use_img_type": true,

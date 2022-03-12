@@ -29,25 +29,15 @@ def _get_obj_txt_mask(input_ids, img_soft_labels):
     obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
     txt_len = len(input_ids)
     obj_txt_mask = [False] * txt_len  # input_ids 的 mask 遮罩，True 为需要 mask 的
-    word_region_pairs = {}  # 保存需要进行交换的 word 和 region ，word 为键（NOTE: 注意 +1，要考虑到填充 [CLS] 后的情况）， region 为值
     if len(obj_tokens) > 0:
         # 选择出一种 token，将所有的该 token 掩码掉
         # tar_token = random.sample(no_repeat, 1)[0]
 
         # 遍历所有的实体 token
         for tar_token in obj_tokens:
-            # 如果 input_ids 中有实体 token ，就查找图片中对应的实体 region 进行替换，如果有多个对应的 region 就随机选一个
             for i, tk in enumerate(input_ids):
                 if tk == tar_token:
                     obj_txt_mask[i] = True
-                    tar_region_idxs = []
-                    for j, rg in enumerate(converted_argmax):
-                        if tar_token in rg:
-                            tar_region_idxs.append(j)
-                    if len(tar_region_idxs) > 0:
-                        # NOTE: 注意 + 1，要考虑到填充[CLS] 后的情况
-                        tar_index = random.choice(tar_region_idxs)
-                        word_region_pairs[i + 1] = tar_index
 
     '''
     # -------------------------------------------------[调试代码]-----------------------------------------------------
@@ -59,7 +49,7 @@ def _get_obj_txt_mask(input_ids, img_soft_labels):
     # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
     # -----------------------------------------------[调试代码 END]---------------------------------------------------
     '''
-    return obj_txt_mask, word_region_pairs
+    return obj_txt_mask
 
 
 def random_word(tokens, vocab_range, mask, obj_txt_mask):
@@ -144,7 +134,7 @@ class MlmDataset(DetectFeatTxtTokDataset):
         input_ids = example['input_ids']
 
         # KevinHwang: get obj_txt_mask
-        obj_txt_mask, word_region_pairs = _get_obj_txt_mask(input_ids, img_soft_labels)
+        obj_txt_mask = _get_obj_txt_mask(input_ids, img_soft_labels)
 
         # text input
         input_ids, txt_labels = self.create_mlm_io(example['input_ids'], obj_txt_mask)
@@ -197,7 +187,7 @@ class MlmDataset(DetectFeatTxtTokDataset):
         exit(1)
         # -----------------------------------------------[调试代码 END]---------------------------------------------------
         '''
-        return input_ids, img_feat, img_pos_feat, attn_masks, txt_labels, word_region_pairs
+        return input_ids, img_feat, img_pos_feat, attn_masks, txt_labels
 
     def create_mlm_io(self, input_ids, obj_txt_mask):
         input_ids, txt_labels = random_word(input_ids,
@@ -222,7 +212,7 @@ def mlm_collate(inputs):
     :attn_masks   (n, max_{L + num_bb}) padded with 0
     :txt_labels   (n, max_L) padded with -1
     """
-    (input_ids, img_feats, img_pos_feats, attn_masks, txt_labels, word_region_pairs
+    (input_ids, img_feats, img_pos_feats, attn_masks, txt_labels
      ) = map(list, unzip(inputs))
 
     # text batches
@@ -249,6 +239,5 @@ def mlm_collate(inputs):
              'img_pos_feat': img_pos_feat,
              'attn_masks': attn_masks,
              'gather_index': gather_index,
-             'txt_labels': txt_labels,
-             'word_region_pairs': word_region_pairs}
+             'txt_labels': txt_labels}
     return batch
