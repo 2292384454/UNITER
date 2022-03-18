@@ -29,7 +29,8 @@ from data import (TokenBucketSampler, TokenBucketSamplerForItm,
                   MlmDataset, MrfrDataset, MrcDataset,
                   mlm_collate, mrfr_collate, mrc_collate,
                   ItmDataset, itm_collate, itm_ot_collate,
-                  WrcDataset, wrc_collate)
+                  WrcDataset, wrc_collate,
+                  AlmDataset, alm_collate)
 
 from model.pretrain import UniterForPretraining
 from optim import get_lr_sched
@@ -126,6 +127,16 @@ def build_wrc_dataset(txt_db, img_db, is_train, opts):
     return dataset, wrc_collate
 
 
+def build_alm_dataset(txt_db, img_db, is_train, opts):
+    if is_train:
+        datasets = [AlmDataset(t, i)
+                    for t, i in zip(txt_db, img_db)]
+        dataset = ConcatDatasetWithLens(datasets)
+    else:
+        dataset = AlmDataset(txt_db, img_db)
+    return dataset, alm_collate
+
+
 def create_dataloaders(datasets, is_train, opts, all_img_dbs=None):
     if all_img_dbs is None:
         all_img_dbs = ImageLmdbGroup(opts.conf_th, opts.max_bb, opts.min_bb,
@@ -163,6 +174,8 @@ def create_dataloaders(datasets, is_train, opts, all_img_dbs=None):
                 dataset = build_itm_dataset(txt_db, img_db, is_train, opts)
             elif task.startswith('wrc'):
                 dataset = build_wrc_dataset(txt_db, img_db, is_train, opts)
+            elif task.startswith('alm'):
+                dataset = build_alm_dataset(txt_db, img_db, is_train, opts)
             else:
                 raise ValueError(f'Undefined task {task}')
 
@@ -396,6 +409,8 @@ def validate(model, val_dataloaders):
             val_log = validate_itm(model, loader)
         elif task.startswith('wrc'):
             val_log = validate_wrc(model, loader)
+        elif task.startswith('alm'):
+            val_log = validate_alm(model, loader)
         else:
             raise ValueError(f'Undefined task {task}')
         val_log = {f'{task}_{k}': v for k, v in val_log.items()}
@@ -521,6 +536,68 @@ def validate_wrc(model, val_loader):
     val_log = {'loss': val_loss}
     LOGGER.info(f"validation finished in {int(tot_time)} seconds, "
                 f"loss: {val_loss:.6f}")
+    return val_log
+
+
+@torch.no_grad()
+def validate_alm(model, val_loader):
+    LOGGER.info("start running ALM validation...")
+    val_mlm_loss = 0
+    val_mrc_loss = 0
+    n_correct = 0
+    n_word = 0
+    tot_score = 0
+    n_feat = 0
+    st = time()
+    for i, batch in enumerate(val_loader):
+        scores, prediction_soft_label = model(batch, task='alm', compute_loss=False)
+        # mrc
+        prediction_soft_label = F.log_softmax(
+            prediction_soft_label, dim=-1)
+        label_targets = batch['label_targets']
+        # background class should not be the target
+        cls_label_targets = label_targets[:, 1:].max(dim=-1)[1] + 1
+        mrc_loss = F.cross_entropy(
+            prediction_soft_label, cls_label_targets,
+            ignore_index=0, reduction='sum')
+        tot_score += compute_accuracy_for_soft_targets(
+            prediction_soft_label[:, 1:], label_targets[:, 1:])
+        val_mrc_loss += mrc_loss.item()
+        n_feat += batch['img_mask_tgt'].sum().item()
+
+        # mlm
+        labels = batch['txt_labels']
+        labels = labels[labels != -1]
+        mlm_loss = F.cross_entropy(scores, labels, reduction='sum')
+        val_mlm_loss += mlm_loss.item()
+        n_correct += (scores.max(dim=-1)[1] == labels).sum().item()
+        n_word += labels.numel()
+
+    # mlm
+    val_mlm_loss = sum(all_gather_list(val_mlm_loss))
+    n_correct = sum(all_gather_list(n_correct))
+    n_word = sum(all_gather_list(n_word))
+    val_mlm_loss /= n_word
+    mlm_acc = n_correct / n_word
+
+    # mrc
+    val_mrc_loss = sum(all_gather_list(val_mrc_loss))
+    tot_score = sum(all_gather_list(tot_score))
+    n_feat = sum(all_gather_list(n_feat))
+    val_mrc_loss /= n_feat
+    mrc_acc = tot_score / n_feat
+
+    tot_time = time() - st
+    val_loss = val_mlm_loss + val_mrc_loss
+
+    val_log = {'val_loss': val_loss,
+               'mlm_acc': mlm_acc,
+               'mrc_acc': mrc_acc,
+               'tok_per_s': n_word / tot_time,
+               'feat_per_s': n_feat / tot_time}
+    LOGGER.info(f"validation finished in {int(tot_time)} seconds, "
+                f"mlm_acc: {mlm_acc * 100:.2f} "
+                f"mrc_acc: {mrc_acc * 100:.2f}")
     return val_log
 
 

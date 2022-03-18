@@ -195,7 +195,7 @@ class AlmDataset(DetectFeatTxtTokDataset):
         # text input
         input_ids, txt_labels = self.create_mlm_io(example['input_ids'], txt_swap)
 
-        img_mask_tgt = _get_img_tgt_mask(img_mask, len(input_ids))
+        img_mask_tgt = _get_img_tgt_mask(img_mask | img_swap, len(input_ids))
 
         attn_masks = torch.ones(len(input_ids) + num_bb, dtype=torch.long)
         '''
@@ -283,6 +283,7 @@ def alm_collate(inputs):
     num_bbs = [f.size(0) for f in img_feats]
 
     input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0)
+    txt_labels = pad_sequence(txt_labels, batch_first=True, padding_value=-1)
     position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long
                                 ).unsqueeze(0)
 
@@ -294,7 +295,6 @@ def alm_collate(inputs):
 
     # 根据 img_masks 进行真正的掩码操作
     img_feat = _mask_img_feat(img_feat, img_masks)
-
     # 将 img_masks 融合以 img_swaps ，获取最后预测需要用的 img_masks、img_mask_tgt、label_targets
     img_masks = img_masks | img_swaps
     img_mask_tgt = pad_sequence(img_mask_tgts,
@@ -309,7 +309,6 @@ def alm_collate(inputs):
     gather_index = get_gather_index(txt_lens, num_bbs, bs, max_tl, out_size)
 
     batch = {'input_ids': input_ids,
-
              'position_ids': position_ids,
              'img_feat': img_feat,
              'img_pos_feat': img_pos_feat,

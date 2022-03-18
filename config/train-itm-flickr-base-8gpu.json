@@ -1,6 +1,6 @@
 {
     "compressed_db": false,
-    "checkpoint": "/storage/pretrain/contrastive_0226/ckpt/model_step_70000.pt",
+    "checkpoint": "/storage/pretrain/pretrain0315/ckpt/model_step_60000.pt",
     "output_dir": "/storage/itm/flickr/default",
     "max_txt_len": 60,
     "conf_th": 0.2,

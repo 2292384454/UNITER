@@ -72,7 +72,7 @@ def main(opts):
         img_dim=IMG_DIM, num_answer=len(ans2label))
     model.to(device)
     if opts.fp16:
-        model = amp.initialize(model, enabled=True, opt_level='O2')
+        model = amp.initialize(model, enabled=True, opt_level='O1')
 
     sampler = TokenBucketSampler(eval_dataset.lens, bucket_size=BUCKET_SIZE,
                                  batch_size=opts.batch_size, droplast=False)

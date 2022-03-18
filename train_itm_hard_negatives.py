@@ -141,7 +141,7 @@ def main(opts):
     # Prepare optimizer
     optimizer = build_optimizer(model, opts)
     model, optimizer = amp.initialize(model, optimizer,
-                                      enabled=opts.fp16, opt_level='O2')
+                                      enabled=opts.fp16, opt_level='O1')
 
     LOGGER.info(f"***** Running training on {n_gpu} GPUs *****")
     LOGGER.info("  Num examples = %d",

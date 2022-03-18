@@ -23,6 +23,7 @@ from .itm import (TokenBucketSamplerForItm, ItmDataset,
 from .mlm import MlmDataset, mlm_collate
 from .mrm import MrfrDataset, MrcDataset, mrfr_collate, mrc_collate
 from .wrc import WrcDataset, wrc_collate
+from .alm import AlmDataset, alm_collate
 from .vcr import (VcrTxtTokLmdb, VcrDataset, VcrEvalDataset,
                   vcr_collate, vcr_eval_collate)
 from .re import (ReTxtTokLmdb, ReDataset, ReEvalDataset,

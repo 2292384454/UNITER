@@ -68,7 +68,7 @@ def main(opts):
     model.init_type_embedding()
     model.load_state_dict(checkpoint, strict=False)
     model.to(device)
-    model = amp.initialize(model, enabled=opts.fp16, opt_level='O2')
+    model = amp.initialize(model, enabled=opts.fp16, opt_level='O1')
 
     results = evaluate(model, eval_dataloader, device)
     # write results

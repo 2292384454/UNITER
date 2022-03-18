@@ -113,6 +113,16 @@ class UniterForPretraining(UniterPreTrainedModel):
             return self.forward_wrc(input_ids, position_ids, img_feat, img_pos_feat,
                                     attention_mask, gather_index, word_region_maps,
                                     compute_loss)
+        elif task.startswith('alm'):
+            word_region_maps = batch['word_region_maps']
+            txt_labels = batch['txt_labels']
+            img_mask_tgt = batch['img_mask_tgt']
+            img_masks = batch['img_masks']
+            mrc_label_target = batch['label_targets']
+            return self.forward_alm(input_ids, position_ids, img_feat, img_pos_feat,
+                                    attention_mask, gather_index, word_region_maps,
+                                    txt_labels, img_mask_tgt, img_masks, mrc_label_target,
+                                    compute_loss)
         else:
             raise ValueError('invalid task')
 
@@ -289,3 +299,38 @@ class UniterForPretraining(UniterPreTrainedModel):
         wrc_loss = -torch.mean(F.log_softmax(mat, dim=1) * mat_mask, dim=1)
 
         return wrc_loss
+
+    def forward_alm(self, input_ids, position_ids, img_feat, img_pos_feat,
+                    attention_mask, gather_index, word_region_maps,
+                    txt_labels, img_mask_tgt, img_masks, label_targets, compute_loss=True):
+        sequence_output = self.uniter(input_ids, position_ids,
+                                      img_feat, img_pos_feat,
+                                      attention_mask, gather_index, word_region_maps=word_region_maps,
+                                      output_all_encoded_layers=False)
+        batch_size = sequence_output.size(0)
+        # get only the text part
+        txt_output = sequence_output[:, :input_ids.size(1), :]
+        # only compute masked tokens for better efficiency
+        txt_masked_output = self._compute_masked_hidden(txt_output,
+                                                        txt_labels != -1)
+        txt_prediction_scores = self.cls(txt_masked_output)
+
+        # only compute masked regions for better efficiency
+        img_masked_output = self._compute_masked_hidden(sequence_output,
+                                                        img_mask_tgt)
+        img_prediction_soft_label = self.region_classifier(img_masked_output)
+
+        if compute_loss:
+            # mlm
+            masked_lm_loss = F.cross_entropy(txt_prediction_scores,
+                                             txt_labels[txt_labels != -1])
+            # mrc
+            # background class should not be the target
+            label_targets = torch.max(label_targets[:, 1:], dim=-1)[1] + 1
+            mrc_loss = F.cross_entropy(
+                img_prediction_soft_label, label_targets,
+                ignore_index=0)
+
+            return (masked_lm_loss + mrc_loss).repeat(batch_size)
+        else:
+            return txt_prediction_scores, img_prediction_soft_label

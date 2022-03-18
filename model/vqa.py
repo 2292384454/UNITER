@@ -17,15 +17,16 @@ from .model import UniterPreTrainedModel, UniterModel
 class UniterForVisualQuestionAnswering(UniterPreTrainedModel):
     """ Finetune UNITER for VQA
     """
+
     def __init__(self, config, img_dim, num_answer):
         super().__init__(config)
         self.uniter = UniterModel(config, img_dim)
         self.vqa_output = nn.Sequential(
-            nn.Linear(config.hidden_size, config.hidden_size*2),
-            GELU(),
-            LayerNorm(config.hidden_size*2, eps=1e-12),
-            nn.Linear(config.hidden_size*2, num_answer)
+            nn.Linear(config.hidden_size, config.hidden_size * 2),
+            GELU()
         )
+        self.norm = LayerNorm(config.hidden_size * 2, eps=1e-12)
+        self.liner = nn.Linear(config.hidden_size * 2, num_answer)
         self.apply(self.init_weights)
 
     def forward(self, batch, compute_loss=True):
@@ -41,7 +42,9 @@ class UniterForVisualQuestionAnswering(UniterPreTrainedModel):
                                       attn_masks, gather_index,
                                       output_all_encoded_layers=False)
         pooled_output = self.uniter.pooler(sequence_output)
-        answer_scores = self.vqa_output(pooled_output)
+        vqa_ot = self.vqa_output(pooled_output)
+        normoutput = self.norm(vqa_ot.float())
+        answer_scores = self.liner(normoutput)
 
         if compute_loss:
             targets = batch['targets']

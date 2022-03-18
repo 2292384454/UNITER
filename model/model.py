@@ -238,11 +238,12 @@ class UniterTextEmbeddings(nn.Module):
         self.LayerNorm = FusedLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, input_ids, position_ids, token_type_ids=None):
+    def forward(self, input_ids, position_ids, token_type_ids=None, words_embeddings=None):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
-        words_embeddings = self.word_embeddings(input_ids)
+        if words_embeddings is None:
+            words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
@@ -276,13 +277,14 @@ class UniterImageEmbeddings(nn.Module):
         self.LayerNorm = FusedLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, img_feat, img_pos_feat, type_embeddings, img_masks=None):
+    def forward(self, img_feat, img_pos_feat, type_embeddings, img_masks=None, transformed_im=None):
         if img_masks is not None:
             self.mask_embedding.weight.data[0, :].fill_(0)
             mask = self.mask_embedding(img_masks.long())
             img_feat = img_feat + mask
 
-        transformed_im = self.img_layer_norm(self.img_linear(img_feat).float())
+        if transformed_im is None:
+            transformed_im = self.img_layer_norm(self.img_linear(img_feat).float())
         transformed_pos = self.pos_layer_norm(self.pos_linear(img_pos_feat).float())
         embeddings = transformed_im + transformed_pos + type_embeddings
         embeddings = self.LayerNorm(embeddings)
@@ -327,34 +329,48 @@ class UniterModel(UniterPreTrainedModel):
         self.apply(self.init_weights)
 
     def _compute_txt_embeddings(self, input_ids, position_ids,
-                                txt_type_ids=None):
-        output = self.embeddings(input_ids, position_ids, txt_type_ids)
+                                txt_type_ids=None, words_embeddings=None):
+        output = self.embeddings(input_ids, position_ids, txt_type_ids, words_embeddings)
         return output
 
     def _compute_img_embeddings(self, img_feat, img_pos_feat, img_masks=None,
-                                img_type_ids=None):
+                                img_type_ids=None, transformed_im=None):
         if img_type_ids is None:
             img_type_ids = torch.ones_like(img_feat[:, :, 0].long())
         img_type_embeddings = self.embeddings.token_type_embeddings(
             img_type_ids)
         output = self.img_embeddings(img_feat, img_pos_feat,
-                                     img_type_embeddings, img_masks)
+                                     img_type_embeddings, img_masks, transformed_im)
         return output
 
     def _compute_img_txt_embeddings(self, input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    gather_index, img_masks=None,
+                                    gather_index, img_masks=None, word_region_maps=None,
                                     txt_type_ids=None, img_type_ids=None):
-        txt_emb = self._compute_txt_embeddings(
-            input_ids, position_ids, txt_type_ids)
-        img_emb = self._compute_img_embeddings(
-            img_feat, img_pos_feat, img_masks, img_type_ids)
-        # align back to most compact input
-        gather_index = gather_index.unsqueeze(-1).expand(
-            -1, -1, self.config.hidden_size)
+        if word_region_maps is None:
+            txt_emb = self._compute_txt_embeddings(
+                input_ids, position_ids, txt_type_ids)
+            img_emb = self._compute_img_embeddings(
+                img_feat, img_pos_feat, img_masks, img_type_ids)
+        # 如果 word_region_maps 非 None ，说明需要进行交换
+        else:
+            words_embeddings = self.embeddings.word_embeddings(input_ids)
+            transformed_im = self.img_embeddings.img_layer_norm(self.img_embeddings.img_linear(img_feat).float())
+            # 进行交换
+            for i, idx_map in enumerate(word_region_maps):
+                if idx_map is not None:
+                    for k, v in idx_map.items():
+                        # swap
+                        temp = transformed_im[i][v]
+                        transformed_im[i][v] = words_embeddings[i][k]
+                        words_embeddings[i][k] = temp
+            txt_emb = self._compute_txt_embeddings(
+                input_ids, position_ids, txt_type_ids, words_embeddings=words_embeddings)
+            img_emb = self._compute_img_embeddings(
+                img_feat, img_pos_feat, img_masks, img_type_ids, transformed_im=transformed_im)
 
-        # TODO: 这里的 torch.gather 操作部分降低了第二维度，如 torch.cat([txt_emb, img_emb], dim=1) 原本 size 为 [88,44,
-        #  768] ，经过 torch.gather 操作后变为 [88,34,768] ，但是这么做的目的是什么呢？ 上面注释中的 most compact input 是什么样的呢？
+        # align back to most compact input
+        gather_index = gather_index.unsqueeze(-1).expand(-1, -1, self.config.hidden_size)
         embedding_output = torch.gather(torch.cat([txt_emb, img_emb], dim=1),
                                         dim=1, index=gather_index)
         return embedding_output
@@ -362,6 +378,7 @@ class UniterModel(UniterPreTrainedModel):
     def forward(self, input_ids, position_ids,
                 img_feat, img_pos_feat,
                 attention_mask, gather_index=None, img_masks=None,
+                word_region_maps=None,
                 output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
         # compute self-attention mask
@@ -383,7 +400,7 @@ class UniterModel(UniterPreTrainedModel):
             embedding_output = self._compute_img_txt_embeddings(
                 input_ids, position_ids,
                 img_feat, img_pos_feat,
-                gather_index, img_masks, txt_type_ids, img_type_ids)
+                gather_index, img_masks, word_region_maps, txt_type_ids, img_type_ids)
 
         encoded_layers = self.encoder(
             embedding_output, extended_attention_mask,
