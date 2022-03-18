@@ -6,19 +6,19 @@ import random
 import torch.nn.functional as F
 
 if __name__ == '__main__':
-    # batch_size=3, txt_len=4, img_len=5, emb_len=6
-    txt_output = torch.tensor(np.random.normal(size=(112, 26, 768)))
-    img_output = torch.tensor(np.random.normal(size=(112, 23, 768)))
-    # 进行归一化
-    txt_output = F.normalize(txt_output, p=2, dim=2)
-    img_output = F.normalize(img_output, p=2, dim=2)
-    # 对 img_output 进行转置
-    img_output = torch.transpose(img_output, 1, 2)
+    words_embeddings = torch.arange(0, 250, 2).unsqueeze(0).unsqueeze(0).resize(5, 5, 5)
+    transformed_im = torch.arange(-250, 0, 2).unsqueeze(0).unsqueeze(0).resize(5, 5, 5)
+    print(words_embeddings)
+    print(transformed_im)
+    word_region_maps = [{0: 2}, {1: 4}, {2: 3}, {0: 4}, {1: 2, 3: 4}]
+    tmp = words_embeddings.clone()
+    # 进行交换
+    for i, idx_map in enumerate(word_region_maps):
+        if idx_map is not None:
+            txt_index = torch.LongTensor(list(idx_map.keys()))
+            img_index = torch.LongTensor(list(idx_map.values()))
+            words_embeddings[i][txt_index] = transformed_im[i][img_index]
+            transformed_im[i][img_index] = tmp[i][txt_index]
 
-    mat = torch.bmm(txt_output, img_output).flatten(1)
-
-    mat_mask = torch.tensor(np.random.randint(0, 2, size=(112, 26, 23))).flatten(1)
-
-    print('mat:', mat)
-    wrc_loss = -torch.mean(F.log_softmax(mat, dim=1) * mat_mask, dim=1)
-    print('wrc_loss:', wrc_loss)
+    print(words_embeddings)
+    print(transformed_im)

@@ -356,15 +356,15 @@ class UniterModel(UniterPreTrainedModel):
         else:
             words_embeddings = self.embeddings.word_embeddings(input_ids)
             transformed_im = self.img_embeddings.img_layer_norm(self.img_embeddings.img_linear(img_feat).float())
+            tmp = words_embeddings.clone()
             # 进行交换
             for i, idx_map in enumerate(word_region_maps):
                 if idx_map is not None:
-                    for k, v in idx_map.items():
-                        # swap
-                        temp = transformed_im[i][v]
-                        transformed_im[i][v] = words_embeddings[i][k]
-                        words_embeddings[i][k] = temp
-                        # print('swap text[{tk}] and img[{iv}]'.format(tk=k, iv=v))
+                    txt_index = torch.LongTensor(list(idx_map.keys()))
+                    img_index = torch.LongTensor(list(idx_map.values()))
+                    words_embeddings[i][txt_index] = transformed_im[i][img_index]
+                    transformed_im[i][img_index] = tmp[i][txt_index]
+                    # print('swap text[{tk}] and img[{iv}]'.format(tk=k, iv=v))
             txt_emb = self._compute_txt_embeddings(
                 input_ids, position_ids, txt_type_ids, words_embeddings=words_embeddings)
             img_emb = self._compute_img_embeddings(
