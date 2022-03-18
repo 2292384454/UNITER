@@ -18,7 +18,7 @@ import numpy as np
 
 
 # KevinHwang@220306
-def _get_obj_txt_mask(input_ids, img_soft_labels):
+def _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     # 使用 argmax 取得每一个 region 的实体标签序号
     # background class should not be the target
     argmax_soft_labels = torch.argmax(img_soft_labels[:, 1:-1], dim=1).tolist()
@@ -27,32 +27,57 @@ def _get_obj_txt_mask(input_ids, img_soft_labels):
                         argmax_soft_labels]
     # 获取所有的实体 token 并去重
     obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
+    word_region_map = {}  # 保存需要进行交换的 word 和 region ，word 为键（NOTE: 注意 +1，要考虑到填充 [CLS] 后的情况）， region 为值
     txt_len = len(input_ids)
-    obj_txt_mask = [False] * txt_len  # input_ids 的 mask 遮罩，True 为需要 mask 的
+    txt_swap = [False] * txt_len
+    img_swap = [False] * num_bb
+    img_mask = [False] * num_bb
+
     if len(obj_tokens) > 0:
-        # 选择出一种 token，将所有的该 token 掩码掉
+        # 选择出一种 token，将所有的该 token 与图片中实体替换
         # tar_token = random.sample(no_repeat, 1)[0]
 
         # 遍历所有的实体 token
         for tar_token in obj_tokens:
+            # 如果 input_ids 中有实体 token ，就查找图片中对应的实体 region 进行替换，如果有多个对应的 region 就随机选一个
             for i, tk in enumerate(input_ids):
                 if tk == tar_token:
-                    obj_txt_mask[i] = True
+                    txt_swap[i] = True
+                    tar_region_idxs = []
+                    for j, rg in enumerate(converted_argmax):
+                        if tar_token in rg:
+                            tar_region_idxs.append(j)
+                    if len(tar_region_idxs) > 0:
+                        # NOTE: 注意 + 1，要考虑到填充[CLS] 后的情况
+                        tar_index = random.choice(tar_region_idxs)
+                        img_swap[tar_index] = True
+                        word_region_map[i + 1] = tar_index
 
+    chosen_regions_idx = set(word_region_map.values())
+    # 获取真正需要 mask 掉的 region
+    for i in range(num_bb):
+        if i not in chosen_regions_idx and random.random() < mask_prob:
+            img_mask[i] = True
+    if not any(img_swap) and not any(img_mask):
+        # at least mask 1
+        img_mask[random.choice(range(num_bb))] = True
     '''
     # -------------------------------------------------[调试代码]-----------------------------------------------------
+    # img_swap_tgt:
     print('obj_tokens:', obj_tokens)
     # obj_tokens: [4355, 4876, 16024, 8090, 17180, 5020, 4637, 24998, 2095, 3504, 13624, 4282, 1339, 3392, 7366,
     # 5324, 4694, 4705, 2146, 7404, 3439, 2928, 1520]
     print('argmax_soft_labels:', argmax_soft_labels)
     # argmax_soft_labels: [118, 248, 1330, 1066, 959, 1281, 1330, 959, 959, 959, 1010, 800, 327, 598, 909, 959, 959,
     # 248, 231, 395, 514, 1330, 345, 1414, 959, 919, 231]
+    print('img_mask:', img_mask)
+    print('word_region_maps:', word_region_maps)
     # -----------------------------------------------[调试代码 END]---------------------------------------------------
     '''
-    return obj_txt_mask
+    return img_swap, txt_swap, img_mask, word_region_map
 
 
-def random_word(tokens, vocab_range, mask, obj_txt_mask):
+def random_word(tokens, vocab_range, mask, txt_swap):
     """
     Masking some random tokens for Language Model task with probabilities as in
         the original BERT paper.
@@ -65,7 +90,7 @@ def random_word(tokens, vocab_range, mask, obj_txt_mask):
 
     for i, token in enumerate(tokens):
         # 选中的实体 token 全部掩码，其余以 15% 概率掩码
-        if obj_txt_mask[i]:
+        if txt_swap[i]:
             tokens[i] = mask
             output_label[i] = token
             continue
@@ -133,11 +158,11 @@ class MlmDataset(DetectFeatTxtTokDataset):
         # text input
         input_ids = example['input_ids']
 
-        # KevinHwang: get obj_txt_mask
-        obj_txt_mask = _get_obj_txt_mask(input_ids, img_soft_labels)
+        # KevinHwang: get txt_swap
+        _, txt_swap, _, word_region_map = _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb)
 
         # text input
-        input_ids, txt_labels = self.create_mlm_io(example['input_ids'], obj_txt_mask)
+        input_ids, txt_labels = self.create_mlm_io(example['input_ids'], txt_swap)
 
         attn_masks = torch.ones(len(input_ids) + num_bb, dtype=torch.long)
         '''
@@ -187,12 +212,12 @@ class MlmDataset(DetectFeatTxtTokDataset):
         exit(1)
         # -----------------------------------------------[调试代码 END]---------------------------------------------------
         '''
-        return input_ids, img_feat, img_pos_feat, attn_masks, txt_labels
+        return input_ids, img_feat, img_pos_feat, attn_masks, txt_labels, word_region_map
 
-    def create_mlm_io(self, input_ids, obj_txt_mask):
+    def create_mlm_io(self, input_ids, txt_swap):
         input_ids, txt_labels = random_word(input_ids,
                                             self.txt_db.v_range,
-                                            self.txt_db.mask, obj_txt_mask)
+                                            self.txt_db.mask, txt_swap)
         input_ids = torch.tensor([self.txt_db.cls_]
                                  + input_ids
                                  + [self.txt_db.sep])
@@ -212,7 +237,7 @@ def mlm_collate(inputs):
     :attn_masks   (n, max_{L + num_bb}) padded with 0
     :txt_labels   (n, max_L) padded with -1
     """
-    (input_ids, img_feats, img_pos_feats, attn_masks, txt_labels
+    (input_ids, img_feats, img_pos_feats, attn_masks, txt_labels, word_region_maps
      ) = map(list, unzip(inputs))
 
     # text batches

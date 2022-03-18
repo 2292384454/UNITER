@@ -364,6 +364,7 @@ class UniterModel(UniterPreTrainedModel):
                         temp = transformed_im[i][v]
                         transformed_im[i][v] = words_embeddings[i][k]
                         words_embeddings[i][k] = temp
+                        # print('swap text[{tk}] and img[{iv}]'.format(tk=k, iv=v))
             txt_emb = self._compute_txt_embeddings(
                 input_ids, position_ids, txt_type_ids, words_embeddings=words_embeddings)
             img_emb = self._compute_img_embeddings(

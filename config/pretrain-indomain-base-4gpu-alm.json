@@ -1,7 +1,7 @@
 {
     "output_dir": "/storage/pretrain/alm_pretrain0318",
     "model_config": "/src/config/uniter-base.json",
-    "checkpoint": "/storage/pretrain/alm_pretrain0317/ckpt/model_step_65000.pt",
+    "checkpoint": "/pretrain/uniter-base-init.pt",
     "mrm_prob": 0.15,
     "itm_neg_prob": 0.5,
     "itm_ot_lambda": 0.1,
