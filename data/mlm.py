@@ -26,7 +26,7 @@ def _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
     converted_argmax = [obj2bert[obj_label] if obj_label in obj2bert.keys() else [] for obj_label in
                         argmax_soft_labels]
     # 获取所有的实体 token 并去重
-    obj_tokens = list(set(tk for tokens in converted_argmax for tk in tokens))
+    obj_tokens = set(tk for tokens in converted_argmax for tk in tokens)
     word_region_map = {}  # 保存需要进行交换的 word 和 region ，word 为键（NOTE: 注意 +1，要考虑到填充 [CLS] 后的情况）， region 为值
     txt_len = len(input_ids)
     txt_swap = [False] * txt_len
@@ -38,23 +38,23 @@ def _get_img_and_txt_swap(input_ids, img_soft_labels, num_bb, mask_prob=0.25):
         # tar_token = random.sample(no_repeat, 1)[0]
 
         # 遍历所有的实体 token
-        for tar_token in obj_tokens:
-            # 如果 input_ids 中有实体 token ，就查找图片中对应的实体 region 进行替换，如果有多个对应的 region 就随机选一个
-            for i, tk in enumerate(input_ids):
-                if tk == tar_token:
-                    txt_swap[i] = True
-                    tar_region_idxs = []
-                    for j, rg in enumerate(converted_argmax):
-                        if tar_token in rg:
-                            tar_region_idxs.append(j)
-                    if len(tar_region_idxs) > 0:
-                        # NOTE: 注意 + 1，要考虑到填充[CLS] 后的情况
-                        tar_index = random.choice(tar_region_idxs)
-                        img_swap[tar_index] = True
-                        word_region_map[i + 1] = tar_index
+
+        # 如果 input_ids 中有实体 token ，就查找图片中对应的实体 region 进行替换，如果有多个对应的 region 就随机选一个
+        for i, tk in enumerate(input_ids):
+            if tk in obj_tokens:
+                txt_swap[i] = True
+                tar_region_idxs = []
+                for j, rg in enumerate(converted_argmax):
+                    if tk in rg:
+                        tar_region_idxs.append(j)
+                if len(tar_region_idxs) > 0:
+                    # NOTE: 注意 + 1，要考虑到填充[CLS] 后的情况
+                    tar_index = random.choice(tar_region_idxs)
+                    img_swap[tar_index] = True
+                    word_region_map[i + 1] = tar_index
 
     chosen_regions_idx = set(word_region_map.values())
-    # 获取真正需要 mask 掉的 region
+    # 获取需要真正 mask 掉的 region
     for i in range(num_bb):
         if i not in chosen_regions_idx and random.random() < mask_prob:
             img_mask[i] = True
@@ -264,5 +264,6 @@ def mlm_collate(inputs):
              'img_pos_feat': img_pos_feat,
              'attn_masks': attn_masks,
              'gather_index': gather_index,
+             'word_region_maps': word_region_maps,
              'txt_labels': txt_labels}
     return batch

@@ -20,9 +20,11 @@ RUN rm -r /usr/local/mpi &&\
 ENV OPENMPI_VERSION=3.1.4
 
 # horovod
-RUN HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_NCCL_LINK=SHARED HOROVOD_WITH_PYTORCH=1 \
+RUN pip install cmake &&\
+    HOROVOD_GPU_BROADCAST=NCCL HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_NCCL_LINK=SHARED HOROVOD_WITH_PYTORCH=1 HOROVOD_CACHE_CAPACITY=10240 \
     pip install --no-cache-dir horovod==0.23.0 &&\
-    ldconfig
+    ldconfig &&\
+    pip install msgpack_numpy msgpack cytoolz
 
 # ssh
 RUN apt-get update &&\

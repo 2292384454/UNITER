@@ -11,6 +11,7 @@ if __name__ == '__main__':
     print(words_embeddings)
     print(transformed_im)
     word_region_maps = [{0: 2}, {1: 4}, {2: 3}, {0: 4}, {1: 2, 3: 4}]
+
     tmp = words_embeddings.clone()
     # 进行交换
     for i, idx_map in enumerate(word_region_maps):

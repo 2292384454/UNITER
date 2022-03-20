@@ -77,11 +77,12 @@ class UniterForPretraining(UniterPreTrainedModel):
         img_pos_feat = batch['img_pos_feat']
         attention_mask = batch['attn_masks']
         gather_index = batch['gather_index']
+        word_region_maps = batch['word_region_maps']
         if task == 'mlm':
             txt_labels = batch['txt_labels']
             return self.forward_mlm(input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    attention_mask, gather_index,
+                                    attention_mask, gather_index, word_region_maps,
                                     txt_labels, compute_loss)
         elif task == 'mrfr':
             img_mask_tgt = batch['img_mask_tgt']
@@ -89,7 +90,7 @@ class UniterForPretraining(UniterPreTrainedModel):
             mrfr_feat_target = batch['feat_targets']
             return self.forward_mrfr(input_ids, position_ids,
                                      img_feat, img_pos_feat,
-                                     attention_mask, gather_index,
+                                     attention_mask, gather_index, word_region_maps,
                                      img_masks, img_mask_tgt,
                                      mrfr_feat_target, compute_loss)
         elif task == 'itm':
@@ -105,16 +106,14 @@ class UniterForPretraining(UniterPreTrainedModel):
             mrc_label_target = batch['label_targets']
             return self.forward_mrc(input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    attention_mask, gather_index,
+                                    attention_mask, gather_index, word_region_maps,
                                     img_masks, img_mask_tgt,
                                     mrc_label_target, task, compute_loss)
         elif task.startswith('wrc'):
-            word_region_maps = batch['word_region_maps']
             return self.forward_wrc(input_ids, position_ids, img_feat, img_pos_feat,
                                     attention_mask, gather_index, word_region_maps,
                                     compute_loss)
         elif task.startswith('alm'):
-            word_region_maps = batch['word_region_maps']
             txt_labels = batch['txt_labels']
             img_mask_tgt = batch['img_mask_tgt']
             img_masks = batch['img_masks']
@@ -127,11 +126,11 @@ class UniterForPretraining(UniterPreTrainedModel):
             raise ValueError('invalid task')
 
     def forward_mlm(self, input_ids, position_ids, img_feat, img_pos_feat,
-                    attention_mask, gather_index,
+                    attention_mask, gather_index, word_region_maps,
                     txt_labels, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index,
+                                      attention_mask, gather_index, word_region_maps=word_region_maps, swap_it=1,
                                       output_all_encoded_layers=False)
         # get only the text part
         sequence_output = sequence_output[:, :input_ids.size(1), :]
@@ -155,11 +154,12 @@ class UniterForPretraining(UniterPreTrainedModel):
         return hidden_masked
 
     def forward_mrfr(self, input_ids, position_ids, img_feat, img_pos_feat,
-                     attention_mask, gather_index, img_masks, img_mask_tgt,
+                     attention_mask, gather_index, word_region_maps,
+                     img_masks, img_mask_tgt,
                      feat_targets, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index,
+                                      attention_mask, gather_index, word_region_maps=word_region_maps, swap_it=2,
                                       output_all_encoded_layers=False,
                                       img_masks=img_masks)
 
@@ -223,11 +223,12 @@ class UniterForPretraining(UniterPreTrainedModel):
             return itm_scores, ot_loss
 
     def forward_mrc(self, input_ids, position_ids, img_feat, img_pos_feat,
-                    attention_mask, gather_index, img_masks, img_mask_tgt,
+                    attention_mask, gather_index, word_region_maps,
+                    img_masks, img_mask_tgt,
                     label_targets, task, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index,
+                                      attention_mask, gather_index, word_region_maps=word_region_maps, swap_it=2,
                                       output_all_encoded_layers=False,
                                       img_masks=img_masks)
 
@@ -305,8 +306,8 @@ class UniterForPretraining(UniterPreTrainedModel):
                     txt_labels, img_mask_tgt, img_masks, label_targets, compute_loss=True):
         sequence_output = self.uniter(input_ids, position_ids,
                                       img_feat, img_pos_feat,
-                                      attention_mask, gather_index, word_region_maps=word_region_maps,
-                                      output_all_encoded_layers=False)
+                                      attention_mask, gather_index, word_region_maps=word_region_maps, swap_it=3,
+                                      output_all_encoded_layers=False, img_masks=img_masks)
         batch_size = sequence_output.size(0)
         # get only the text part
         txt_output = sequence_output[:, :input_ids.size(1), :]

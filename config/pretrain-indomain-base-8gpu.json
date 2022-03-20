@@ -1,7 +1,7 @@
 {
-    "output_dir": "/storage/pretrain/pretrain0315",
+    "output_dir": "/storage/pretrain/pretrain03120_single_alm",
     "model_config": "/src/config/uniter-base.json",
-    "checkpoint": "/storage/pretrain/pretrain0314/ckpt/model_step_60000.pt",
+    "checkpoint": "/pretrain/uniter-base-init.pt",
     "mrm_prob": 0.15,
     "itm_neg_prob": 0.5,
     "itm_ot_lambda": 0.1,
@@ -10,11 +10,11 @@
     "max_bb": 100,
     "min_bb": 10,
     "num_bb": 36,
-    "train_batch_size": 10240,
-    "val_batch_size": 10240,
+    "train_batch_size": 20480,
+    "val_batch_size": 20480,
     "gradient_accumulation_steps": 2,
     "learning_rate": 5e-05,
-    "valid_steps": 10000,
+    "valid_steps": 5000,
     "num_train_steps": 300000,
     "optim": "adamw",
     "betas": [
@@ -44,7 +44,7 @@
                 "itm",
                 "mlm",
                 "mrfr",
-                "mrckl",
+                "mrc",
                 "wrc"
             ],
             "mix_ratio": [
@@ -67,7 +67,7 @@
                 "itm",
                 "mlm",
                 "mrfr",
-                "mrckl",
+                "mrc",
                 "wrc"
             ],
             "mix_ratio": [
@@ -92,7 +92,7 @@
                 "itm",
                 "mlm",
                 "mrfr",
-                "mrckl",
+                "mrc",
                 "wrc"
             ]
         },
@@ -108,7 +108,7 @@
                 "itm",
                 "mlm",
                 "mrfr",
-                "mrckl",
+                "mrc",
                 "wrc"
             ]
         }

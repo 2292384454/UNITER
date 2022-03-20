@@ -345,7 +345,7 @@ class UniterModel(UniterPreTrainedModel):
 
     def _compute_img_txt_embeddings(self, input_ids, position_ids,
                                     img_feat, img_pos_feat,
-                                    gather_index, img_masks=None, word_region_maps=None,
+                                    gather_index, img_masks=None, word_region_maps=None, swap_it=0,
                                     txt_type_ids=None, img_type_ids=None):
         if word_region_maps is None:
             txt_emb = self._compute_txt_embeddings(
@@ -356,14 +356,17 @@ class UniterModel(UniterPreTrainedModel):
         else:
             words_embeddings = self.embeddings.word_embeddings(input_ids)
             transformed_im = self.img_embeddings.img_layer_norm(self.img_embeddings.img_linear(img_feat).float())
+
             tmp = words_embeddings.clone()
             # 进行交换
             for i, idx_map in enumerate(word_region_maps):
                 if idx_map is not None:
                     txt_index = torch.LongTensor(list(idx_map.keys()))
                     img_index = torch.LongTensor(list(idx_map.values()))
-                    words_embeddings[i][txt_index] = transformed_im[i][img_index]
-                    transformed_im[i][img_index] = tmp[i][txt_index]
+                    if swap_it & 1 != 0:
+                        words_embeddings[i][txt_index] = transformed_im[i][img_index]
+                    if swap_it & 2 != 0:
+                        transformed_im[i][img_index] = tmp[i][txt_index]
                     # print('swap text[{tk}] and img[{iv}]'.format(tk=k, iv=v))
             txt_emb = self._compute_txt_embeddings(
                 input_ids, position_ids, txt_type_ids, words_embeddings=words_embeddings)
@@ -379,7 +382,7 @@ class UniterModel(UniterPreTrainedModel):
     def forward(self, input_ids, position_ids,
                 img_feat, img_pos_feat,
                 attention_mask, gather_index=None, img_masks=None,
-                word_region_maps=None,
+                word_region_maps=None, swap_it=0,  # swap_it: 1 只需要把文本换掉(mlm);2 只需要把图片换掉(mrm);3 都需要(alm)
                 output_all_encoded_layers=True,
                 txt_type_ids=None, img_type_ids=None):
         # compute self-attention mask
@@ -401,7 +404,7 @@ class UniterModel(UniterPreTrainedModel):
             embedding_output = self._compute_img_txt_embeddings(
                 input_ids, position_ids,
                 img_feat, img_pos_feat,
-                gather_index, img_masks, word_region_maps, txt_type_ids, img_type_ids)
+                gather_index, img_masks, word_region_maps, swap_it, txt_type_ids, img_type_ids)
 
         encoded_layers = self.encoder(
             embedding_output, extended_attention_mask,
